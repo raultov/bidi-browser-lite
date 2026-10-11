@@ -10,3 +10,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Project scaffolding: quality gates (`make check`: fmt, clippy, tests, docs,
   duplication), `AGENTS.md`, MIT licence.
+- CI on Linux, macOS and Windows, a real-Firefox job on Ubuntu, and a release
+  job: pushing a version tag creates its GitHub release with that version's
+  CHANGELOG section as notes, once every check passes.

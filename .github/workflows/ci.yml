@@ -1,0 +1,98 @@
+name: CI
+on:
+  push:
+    branches: [ "master", "phase-*" ]
+    # A version tag also creates its GitHub release, once every check passes.
+    tags: [ "v*" ]
+  pull_request: { branches: [ "master" ] }
+  # Releases a tag that already exists (its checks run first, on that tag's code).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing version tag to release, e.g. v0.1.0"
+        required: true
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Test
+        run: cargo test --all-features
+      - name: Doc
+        shell: bash
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+  dupes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Duplication
+        run: make dupes
+  firefox:
+    # The #[ignore]d real-Firefox tests (tests/e2e_real_firefox.rs), headless,
+    # against a non-snap Firefox installed by the action. macOS and Windows run
+    # only the hermetic checks above: real-browser support there is untested.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: browser-actions/setup-firefox@0bc507ddf224827e3b1af68e014d5e42ab93e795 # v1.7.2
+        with:
+          firefox-version: latest
+      - name: Real-Firefox tests (headless)
+        env:
+          BIDI_BROWSER_LITE_HEADLESS: "1"
+        run: cargo test --all-features --test e2e_real_firefox -- --ignored --test-threads=1
+  release:
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+    needs: [check, dupes, firefox]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Create or update the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          if [ "$TAG" != "v$version" ]; then
+            echo "Tag $TAG does not match the version in Cargo.toml ($version)" >&2
+            exit 1
+          fi
+
+          # The release notes are this version's section of CHANGELOG.md.
+          awk -v heading="## [$version]" '
+            index($0, heading) == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "CHANGELOG.md has no section for $version" >&2
+            exit 1
+          fi
+          printf '\nhttps://crates.io/crates/bidi-browser-lite/%s\n' "$version" >> notes.md
+
+          title="bidi-browser-lite $version"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release edit "$TAG" --title "$title" --notes-file notes.md
+          else
+            gh release create "$TAG" --verify-tag --title "$title" --notes-file notes.md
+          fi
