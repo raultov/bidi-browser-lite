@@ -23,3 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `validate()`. `ProfileMode::UserDefault` is accepted only with
   `AttachOnly`; proxy URLs with credentials are refused; `Debug` never shows
   environment values, pref values or the proxy.
+- `discovery` module: `discover_default()` finds Firefox on Linux (snap
+  binary first, then `PATH`, then fixed paths), macOS (release, Developer
+  Edition, Nightly; system and `~/Applications`) and Windows (`ProgramFiles`,
+  `ProgramFiles(x86)`, `LOCALAPPDATA`, then `PATH` with `PATHEXT`);
+  `FIREFOX_PATH` wins and a wrong value is an error. `is_snap_firefox()`.
