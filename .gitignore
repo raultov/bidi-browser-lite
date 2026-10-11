@@ -1,0 +1,6 @@
+/target/
+**/target/
+.idea/
+.knot/
+/docs/specs/
+/PROMPT.md

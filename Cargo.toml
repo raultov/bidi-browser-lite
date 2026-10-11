@@ -1,0 +1,60 @@
+[package]
+name = "bidi-browser-lite"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+authors = ["Raul Tovar <raultov@protonmail.com>"]
+description = "Full lifecycle control of WebDriver BiDi browsers (Firefox): discovery, launch, profiles, ports, one shared BiDi session and the optional Firefox debugger port, on top of bidi-lite."
+readme = "README.md"
+repository = "https://github.com/raultov/bidi-browser-lite"
+license = "MIT"
+keywords = ["webdriver", "bidi", "firefox", "browser", "automation"]
+categories = ["web-programming", "development-tools::testing", "asynchronous"]
+exclude = [".gitignore", "examples/*", "docs/*", "tests/*", "Makefile", "dupes.toml", "clippy.toml", "AGENTS.md"]
+
+[features]
+# In-process BiDi/RDP mocks and the `fake_firefox_helper` binary, for this
+# crate's tests and for downstream crates that test without a real Firefox.
+test-support = ["dep:tokio-tungstenite", "dep:futures-util"]
+
+[lints.rust]
+# No-unsafe policy (AGENTS.md). `deny` rather than `forbid`: an audited
+# exception would need `#[expect(unsafe_code, reason = "...")]`.
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+# Readability gates. Thresholds live in clippy.toml; these lints are
+# allow-by-default (pedantic/nursery), so they are inert without this.
+too_many_lines = "warn"
+cognitive_complexity = "warn"
+
+# Ban bare `#[allow]` in favour of `#[expect(..., reason = "...")]`.
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+
+# Library hygiene: a panic in a library is a bug the caller cannot handle.
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+
+# cdp-browser-lite needed `#[expect]` for these; this crate must pass clean.
+struct_excessive_bools = "warn"
+fn_params_excessive_bools = "warn"
+
+[dependencies]
+bidi-lite = "0.1.1"
+tokio = { version = "1.53.2", features = ["process", "net", "time", "fs", "io-util", "sync", "macros", "rt-multi-thread"] }
+thiserror = "2.0.21"
+tracing = "0.1.44"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tempfile = "3.27.0"
+tokio-tungstenite = { version = "0.30.0", optional = true }
+futures-util = { version = "0.3.34", optional = true, default-features = false, features = ["sink", "std"] }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31.3", features = ["signal", "process"] }
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

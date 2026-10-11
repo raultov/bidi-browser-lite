@@ -1,0 +1,41 @@
+# Clippy thresholds for bidi-browser-lite.
+#
+# Copied from bidi-lite's final clippy.toml on 2026-10-11 (which derived from
+# knot-lite's). bidi-browser-lite is greenfield, so it starts at bidi-lite's
+# final values.
+# POLICY: values may only ever be TIGHTENED, never loosened. Each phase gate
+# re-measures the curves below and records them.
+#
+# NOTE: a threshold here does NOT enable a lint, it only parametrises it:
+#   too_many_arguments    complexity  warn   -> active out of the box
+#   type_complexity       complexity  warn   -> active out of the box
+#   excessive_nesting     complexity  warn   -> active once threshold > 0
+#   too_many_lines        pedantic    allow  -> enabled in Cargo.toml [lints.clippy]
+#   cognitive_complexity  nursery     allow  -> enabled in Cargo.toml [lints.clippy]
+
+# clippy::too_many_arguments (default: 7). cdp-lite used 4; knot-lite 5.
+# Counting &self; group parameters in small structs instead of raising it.
+too-many-arguments-threshold = 4
+
+# clippy::type_complexity (default: 250). knot-lite's target, cdp-lite's value.
+type-complexity-threshold = 150
+
+# clippy::excessive_nesting (default: 0 = disabled). knot-lite's target.
+excessive-nesting-threshold = 5
+
+# clippy::too_many_lines (pedantic, default: 100). Applies to tests too: long
+# tests are split into Given/When/Then helpers (docs/specs 00 §9.3).
+too-many-lines-threshold = 50
+
+# clippy::cognitive_complexity (nursery, default: 25). bidi-lite ratcheted it
+# from 15 to 12 at its final measurement. tracing macros may inflate the score.
+cognitive-complexity-threshold = 12
+
+# Library hygiene lints (Cargo.toml [lints.clippy]) are relaxed in test code
+# only. These are configuration, not #[allow] attributes.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+
+# --- Measured curves (appended at every phase gate) ---
+# Format: <lint>: <value> -> <violations> | ... (date, phase)
