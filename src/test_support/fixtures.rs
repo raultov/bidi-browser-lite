@@ -45,10 +45,23 @@ pub(crate) const RDP_EVALUATE_REPLY: &str = include_str!("fixtures/rdp/evaluate_
 pub(crate) const RDP_EVALUATION_RESULT: &str = include_str!("fixtures/rdp/evaluation_result.json");
 pub(crate) const RDP_SOURCE_LONG_STRING: &str =
     include_str!("fixtures/rdp/source_long_string.json");
+/// Captured `websocket` resources from Firefox 157 (open, frame sent/recv, close).
+pub const RDP_RESOURCES_WEBSOCKET: &str = include_str!("fixtures/rdp/resources_websocket.json");
+
+/// Captured `error-message` resources from Firefox 157 (JS errors and cookie rejections).
+pub const RDP_RESOURCES_ERROR_MESSAGE: &str =
+    include_str!("fixtures/rdp/resources_error_message.json");
+
+/// Captured `css-message` resources from Firefox 157 (CSS parser warnings).
+pub const RDP_RESOURCES_CSS_MESSAGE: &str = include_str!("fixtures/rdp/resources_css_message.json");
+
+/// Synthetic `platform-message` resource array.
+pub const RDP_RESOURCES_PLATFORM_MESSAGE: &str =
+    include_str!("fixtures/rdp/resources_platform_message.handmade.json");
 
 /// Every embedded fixture, for the parse test.
 #[cfg(test)]
-pub(crate) const ALL: [&str; 31] = [
+pub(crate) const ALL: [&str; 35] = [
     SESSION_STATUS_READY,
     SESSION_STATUS_BUSY,
     SESSION_NEW,
@@ -80,6 +93,10 @@ pub(crate) const ALL: [&str; 31] = [
     RDP_EVALUATE_REPLY,
     RDP_EVALUATION_RESULT,
     RDP_SOURCE_LONG_STRING,
+    RDP_RESOURCES_WEBSOCKET,
+    RDP_RESOURCES_ERROR_MESSAGE,
+    RDP_RESOURCES_CSS_MESSAGE,
+    RDP_RESOURCES_PLATFORM_MESSAGE,
 ];
 
 /// Parses a fixture. They are compile-time constants checked by a unit test,

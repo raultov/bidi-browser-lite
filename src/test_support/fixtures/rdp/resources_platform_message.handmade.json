@@ -1,0 +1,15 @@
+{
+  "array": [
+    [
+      "platform-message",
+      [
+        {
+          "message": "Gecko platform message test notification",
+          "timeStamp": 1791822789635
+        }
+      ]
+    ]
+  ],
+  "from": "server1.conn1.watcher2.process7//windowGlobalTarget2",
+  "type": "resources-available-array"
+}

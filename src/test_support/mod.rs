@@ -11,7 +11,7 @@
 //! down when dropped.
 
 mod bidi;
-mod fixtures;
+pub mod fixtures;
 mod rdp;
 mod server;
 

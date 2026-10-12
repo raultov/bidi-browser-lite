@@ -56,7 +56,7 @@ struct_excessive_bools = "warn"
 fn_params_excessive_bools = "warn"
 
 [dependencies]
-bidi-lite = "0.1.1"
+bidi-lite = "0.1.2"
 tokio = { version = "1.53.2", features = ["process", "net", "time", "fs", "io-util", "sync", "macros", "rt-multi-thread", "signal"] }
 thiserror = "2.0.21"
 tracing = "0.1.44"

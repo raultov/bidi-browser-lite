@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `test-support`: real Firefox 157 RDP fixtures for `websocket`, `error-message`, and `css-message` watcher resources (`fixtures::RDP_RESOURCES_*`), plus a synthetic `platform-message` fixture.
+- Dependencies: updated `bidi-lite` to 0.1.2 for watcher resource APIs.
+
 ## [0.1.3] - 2026-10-12
 
 ### Added
