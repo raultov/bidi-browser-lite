@@ -59,6 +59,7 @@ pub use bidi_lite::tab::Tab;
 pub use browser::Browser;
 pub use config::{BrowserConfig, BrowserConfigBuilder, LaunchMode, PrefValue, ProfileMode};
 pub use error::{BrowserError, ConfigError, EarlyExitReason, ProfileError};
+pub use pool::{BrowserEntry, BrowserId, BrowserPool};
 pub use ports::PortAllocator;
 
 /// Polls `check` every 20 ms for up to 5 s (unit-test helper).

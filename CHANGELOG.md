@@ -62,7 +62,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stuck with an orphaned session, `SessionBusy` for attached ones,
   `keep_alive_on_drop`, and accessors (`debug_address`, `rdp_address`,
   `profile_dir`, `is_managed`, `is_alive`).
+- `pool` module: `BrowserPool` (`new`, `with_allocator`, `open`, `get`,
+  `entry`, `entries`, `len`, `is_empty`, `close`, `close_all`) with its own
+  port allocator, `BrowserId`, and `BrowserEntry` snapshots (with
+  `rdp_port`); an open with a Firefox-picked port is retried up to 5 times
+  after losing a port race.
 - Crate-root re-exports of the `bidi-lite` types (`BidiClient`,
   `BrowserClient`, `ContextInfo`, `ReadinessState`, `Tab`, `EventFilter`,
   `WsCommand`, `WsResponse`, `NoParams`, `BidiError`, `BidiResult`,
   `RdpClient`, `Debugger`) and of this crate's main types.
+- `ConfigError::PerPortProfileNeedsPort`: `PersistentPerPort` needs a fixed
+  BiDi port.

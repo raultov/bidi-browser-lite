@@ -22,6 +22,8 @@
 //! arguments separated by NUL. `FAKE_FIREFOX_ENV_PROBE` names an environment
 //! variable whose presence (never its value) is appended to that log.
 //! `FAKE_FIREFOX_PID_FILE` names a file that gets the helper's PID.
+//! `FAKE_FIREFOX_FAIL_FIRST` names a marker file: when it does not exist yet,
+//! the helper creates it and exits 69 (a port race lost once).
 //! `FAKE_FIREFOX_DROP_AFTER_MS`: once the first session exists, every BiDi
 //! socket is dropped after that many milliseconds, leaving the session
 //! orphaned (what a crashed client does to Firefox).
@@ -87,10 +89,25 @@ fn write_pid_file() {
     }
 }
 
+/// True on the first run with `FAKE_FIREFOX_FAIL_FIRST` set.
+fn lose_first_race() -> bool {
+    let Some(marker) = std::env::var_os("FAKE_FIREFOX_FAIL_FIRST") else {
+        return false;
+    };
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(marker)
+        .is_ok()
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     log_invocation(&args);
     write_pid_file();
+    if lose_first_race() {
+        return exit_after_delay(69);
+    }
     let mode = std::env::var("FAKE_FIREFOX_MODE").unwrap_or_else(|_| "serve".to_owned());
     match mode.as_str() {
         "exit_immediately" => ExitCode::from(1),

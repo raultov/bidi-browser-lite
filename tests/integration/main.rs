@@ -7,6 +7,8 @@ mod browser_lifecycle;
 #[cfg(test)]
 mod fake_helper;
 #[cfg(test)]
+mod pool;
+#[cfg(test)]
 mod process;
 #[cfg(test)]
 mod secrets;
