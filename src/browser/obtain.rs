@@ -212,7 +212,17 @@ pub(crate) async fn launch(
     let rdp = pair.rdp.as_ref().map(PortReservation::port);
     let path = firefox_path(config)?;
     let profile = prepare_profile(config, &path, bidi)?;
-    let (process, port) = spawn(config, &path, &profile, (bidi, rdp)).await?;
+    // Declared after `profile`: if this future is cancelled, the process is
+    // dropped (killed, exit awaited) before its profile is removed.
+    let mut process = start(config, &path, &profile, (bidi, rdp))?;
+    let ready = Readiness {
+        host: &config.host,
+        bidi_port: bidi,
+        rdp_port: rdp,
+        profile_dir: profile.dir(),
+        timeout: config.timeouts.startup,
+    };
+    let port = process::wait_ready(&mut process, &ready).await?;
     info!(port, rdp = ?rdp, pid = ?process.id(), "launched Firefox");
     let mut state = BrowserState::managed(process, profile, (port, rdp));
     match open_session(config, port).await {
@@ -262,12 +272,12 @@ fn prepare_profile(
     Ok(Profile::prepare(&spec)?)
 }
 
-async fn spawn(
+fn start(
     config: &BrowserConfig,
     path: &std::path::Path,
     profile: &Profile,
     (bidi, rdp): (u16, Option<u16>),
-) -> Result<(process::FirefoxProcess, u16), BrowserError> {
+) -> Result<process::FirefoxProcess, BrowserError> {
     let profile_dir = profile
         .dir()
         .map(std::path::Path::to_path_buf)
@@ -279,19 +289,11 @@ async fn spawn(
         config,
         wait_for_browser: cfg!(windows),
     };
-    let spec = SpawnSpec {
+    process::start(SpawnSpec {
         path,
         args: build_args(&plan),
         env: &config.env_extra,
-    };
-    let ready = Readiness {
-        host: &config.host,
-        bidi_port: bidi,
-        rdp_port: rdp,
-        profile,
-        timeout: config.timeouts.startup,
-    };
-    process::spawn(spec, &ready).await
+    })
 }
 
 #[cfg(test)]

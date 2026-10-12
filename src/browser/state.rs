@@ -174,10 +174,9 @@ impl Drop for BrowserState {
             return;
         }
         if self.managed && !self.keep_alive_on_drop {
-            // Killing Firefox frees its session. The profile is removed only
-            // once the process has exited (a dying Firefox may still write
-            // to it); without a runtime the guards do it synchronously.
-            reap_in_background(self.process.take(), self.profile.take());
+            // The guards do it: the process (declared first) is killed and
+            // its exit awaited, which frees its session, then an ephemeral
+            // profile is removed.
             return;
         }
         if let Some(process) = self.process.as_mut() {
@@ -194,20 +193,6 @@ impl Drop for BrowserState {
             end_in_background(session);
         }
     }
-}
-
-/// Kills `process`, waits for it to exit, then drops `profile` (removing an
-/// ephemeral directory), in a task when a runtime is available.
-fn reap_in_background(process: Option<FirefoxProcess>, profile: Option<Profile>) {
-    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-        return;
-    };
-    runtime.spawn(async move {
-        if let Some(mut process) = process {
-            process.terminate(Duration::ZERO).await;
-        }
-        drop(profile);
-    });
 }
 
 /// Best-effort `session.end` from a synchronous context: a Firefox that keeps
