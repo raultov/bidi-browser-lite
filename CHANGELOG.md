@@ -36,3 +36,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session that outlives its WebSocket, like Firefox), `MockRdp` (root
   greeting, `listTabs`, `getRoot`; or silent) and `MockFirefox`. Replies are
   built from frames captured from Firefox 157.
+- `probe` module: `is_port_open`, `is_firefox_bidi`, `bidi_session_available`
+  (WebSocket to `/session` + `session.status`, never `session.new`) and
+  `is_firefox_rdp` (root actor greeting), each bounded by its timeout.
