@@ -79,5 +79,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exception, read a variable in the paused frame) and `persistent_profile`;
   `tests/run_all_e2e.sh` (`make e2e`), `tests/firefox.sh` and the
   `#[ignore]`d real-Firefox tests (`make test-real-firefox`).
+- README: quick start, RDP debugging, architecture and lifecycle diagrams,
+  launch decision table, the one-session rule, ports, profiles, the
+  cdp-browser-lite equivalence table, test support, security,
+  troubleshooting, and supported platforms with what is untested. Its code
+  blocks compile as doctests.
 - `ConfigError::PerPortProfileNeedsPort`: `PersistentPerPort` needs a fixed
   BiDi port.

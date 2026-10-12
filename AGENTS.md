@@ -48,7 +48,10 @@ request in the specs; never edit `../bidi-lite`.
    tests in the module first; `tests/` only when a real child process (the
    fake helper) is needed. **Hermetic gate:** `make check` never starts a
    real Firefox, never touches the network, binds only `127.0.0.1:0`.
-   Real-Firefox tests are `#[ignore = "requires a real Firefox"]`.
+   Real-Firefox tests are `#[ignore = "requires a real Firefox"]`. Unit tests
+   that build a `Browser` set `firefox_path` to a nonexistent file so a bug
+   can never launch the real Firefox. Integration tests use their own
+   `PortAllocator` and fixed ports from `support::free_port` (20000-29999).
 9. After every task: `make check && git add <explicit files> && git commit -m
    "phaseN(FN.x): <summary>"`. CHANGELOG `[Unreleased]` and README in the
    same commit as the change.
@@ -96,14 +99,15 @@ src/
 ├── probe.rs          side-effect free TCP/BiDi/RDP probes
 ├── profile.rs        profile roots, user.js managed block, port file, locks, sweep
 ├── process.rs        spawn + readiness, FirefoxProcess::terminate
-├── browser.rs        Browser: ensure, session, clients, stop/restart, Drop
+├── browser/          Browser (mod.rs), the pure launch decision + attach/launch (obtain.rs),
+│                     BrowserState with stop and Drop (state.rs)
 ├── pool.rs           BrowserPool, BrowserId, BrowserEntry
-├── test_support/     feature `test-support`: MockBidi, MockRdp, MockFirefox
+├── test_support/     feature `test-support`: MockBidi, MockRdp, MockFirefox and the
+│                     real Firefox frames they replay (fixtures/, embedded with include_str!)
 └── bin/fake_firefox_helper.rs   test double (feature `test-support`)
 examples/             runnable programs; need a real Firefox
 tests/
-├── fixtures/         real BiDi/RDP frames captured from Firefox
-├── *.rs              integration tests spawning the fake helper
+├── integration/      one test binary spawning the fake helper (a module per area + support)
 ├── e2e_real_firefox.rs  #[ignore]d real-Firefox tests (CI firefox job)
 ├── firefox.sh        start/stop a visible Firefox for the attach example
 └── run_all_e2e.sh    `make e2e`

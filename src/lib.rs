@@ -62,6 +62,11 @@ pub use error::{BrowserError, ConfigError, EarlyExitReason, ProfileError};
 pub use pool::{BrowserEntry, BrowserId, BrowserPool};
 pub use ports::PortAllocator;
 
+/// The README's code blocks, compiled as doctests (they use `test_support`).
+#[cfg(all(doctest, feature = "test-support"))]
+#[doc = include_str!("../README.md")]
+pub struct ReadmeDoctests;
+
 /// Polls `check` every 20 ms for up to 5 s (unit-test helper).
 #[cfg(test)]
 pub(crate) async fn test_support_wait(check: impl Fn() -> bool) -> bool {
