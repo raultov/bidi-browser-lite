@@ -143,6 +143,16 @@ Add `launcher/<browser>.rs` with candidates, args, prefs/config, readiness
 and lock knowledge; select it without breaking existing public types
 (`#[non_exhaustive]` enums only); same scenarios as Firefox's.
 
+## Releasing
+
+1. Bump `version` in `Cargo.toml` (and `Cargo.lock`) and close the CHANGELOG
+   section as `## [X.Y.Z] - <date>`, in one commit.
+2. Push to `master` (human only). Once every CI check passes, the `release`
+   job creates the tag `vX.Y.Z` on that commit and the GitHub release, with
+   the CHANGELOG section as notes. Pushes that do not bump the version skip
+   the release; an existing tag is never moved.
+3. `cargo publish` stays manual, after CI is green.
+
 ## Plans
 
 Specs and phase plans (`docs/specs/`, gitignored) hold the phase order, the

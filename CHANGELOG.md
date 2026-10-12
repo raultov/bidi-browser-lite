@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Windows: the orphaned ephemeral-profile sweep now runs too. It removes only
   directories with no `parent.lock` (a lock's owner cannot be checked there,
   so a locked profile is never deleted).
+- CI: every push to `master` creates the GitHub release of the `Cargo.toml`
+  version (tag included, on that commit) when that version has none yet,
+  once every check passes; pushes that do not bump the version skip it.
 
 ## [0.1.0] - 2026-10-12
 

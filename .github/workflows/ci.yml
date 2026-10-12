@@ -2,7 +2,8 @@ name: CI
 on:
   push:
     branches: [ "master", "phase-*" ]
-    # A version tag also creates its GitHub release, once every check passes.
+    # A master push releases a new Cargo.toml version; a version tag
+    # (re)releases that tag. Both only once every check passes.
     tags: [ "v*" ]
   pull_request: { branches: [ "master" ] }
   # Releases a tag that already exists (its checks run first, on that tag's code).
@@ -58,7 +59,12 @@ jobs:
           BIDI_BROWSER_LITE_HEADLESS: "1"
         run: cargo test --all-features --test e2e_real_firefox -- --ignored --test-threads=1
   release:
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+    # Every push to master releases the Cargo.toml version if it has no GitHub
+    # release yet (the tag is created on that commit); pushes that do not bump
+    # the version skip. A pushed v* tag, or a dispatch, (re)releases that tag.
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/master')
+      || startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
     needs: [check, dupes, firefox]
     runs-on: ubuntu-latest
     permissions:
@@ -70,12 +76,26 @@ jobs:
       - name: Create or update the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag || github.ref_name }}
+          # Empty on a master push: the tag then comes from Cargo.toml.
+          REQUESTED_TAG: ${{ inputs.tag || (startsWith(github.ref, 'refs/tags/') && github.ref_name || '') }}
         run: |
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
-          if [ "$TAG" != "v$version" ]; then
-            echo "Tag $TAG does not match the version in Cargo.toml ($version)" >&2
+          tag="v$version"
+          if [ -n "$REQUESTED_TAG" ] && [ "$REQUESTED_TAG" != "$tag" ]; then
+            echo "Tag $REQUESTED_TAG does not match the version in Cargo.toml ($version)" >&2
             exit 1
+          fi
+
+          # A master push never moves or re-releases an existing version.
+          if [ -z "$REQUESTED_TAG" ]; then
+            if gh release view "$tag" > /dev/null 2>&1; then
+              echo "$tag is already released; bump the version to release again"
+              exit 0
+            fi
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+              echo "::warning::tag $tag exists without a release; bump the version, or release it with workflow_dispatch"
+              exit 0
+            fi
           fi
 
           # The release notes are this version's section of CHANGELOG.md.
@@ -91,8 +111,11 @@ jobs:
           printf '\nhttps://crates.io/crates/bidi-browser-lite/%s\n' "$version" >> notes.md
 
           title="bidi-browser-lite $version"
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release edit "$TAG" --title "$title" --notes-file notes.md
+          if [ -z "$REQUESTED_TAG" ]; then
+            # Creates the tag on the commit that passed every check.
+            gh release create "$tag" --target "$GITHUB_SHA" --title "$title" --notes-file notes.md
+          elif gh release view "$tag" > /dev/null 2>&1; then
+            gh release edit "$tag" --title "$title" --notes-file notes.md
           else
-            gh release create "$TAG" --verify-tag --title "$title" --notes-file notes.md
+            gh release create "$tag" --verify-tag --title "$title" --notes-file notes.md
           fi
