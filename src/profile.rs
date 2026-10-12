@@ -60,10 +60,11 @@ pub(crate) struct ProfileSpec<'a> {
 pub(crate) enum LockState {
     /// No lock.
     Free,
-    /// Locked by a running process.
-    Live(u32),
+    /// Locked by a running process (its PID when the lock names it: the
+    /// Unix symlink does, Windows' `parent.lock` does not).
+    Live(Option<u32>),
     /// Locked by a process that is gone.
-    Stale(u32),
+    Stale(Option<u32>),
     /// Locked, but liveness cannot be checked (Windows, unreadable lock).
     Unknown,
 }
@@ -111,14 +112,6 @@ impl Profile {
     /// Keeps an ephemeral directory on drop, for a browser kept alive.
     pub(crate) fn keep_on_drop(&mut self) {
         self.keep = true;
-    }
-
-    /// The BiDi port Firefox wrote for a port-0 launch, if it did yet.
-    pub(crate) fn read_port_file(&self) -> Result<Option<u16>, ProfileError> {
-        match &self.dir {
-            Some(dir) => read_port_file(dir),
-            None => Ok(None),
-        }
     }
 
     /// Removes an ephemeral directory; never touches a persistent one.
@@ -315,7 +308,8 @@ fn remove_port_file(dir: &Path) {
     let _ = std::fs::remove_file(dir.join(PORT_FILE));
 }
 
-fn read_port_file(dir: &Path) -> Result<Option<u16>, ProfileError> {
+/// The BiDi port in `dir`'s port file, if Firefox wrote it yet.
+pub(crate) fn read_port_file(dir: &Path) -> Result<Option<u16>, ProfileError> {
     let path = dir.join(PORT_FILE);
     let Ok(text) = std::fs::read_to_string(&path) else {
         return Ok(None);
@@ -341,14 +335,24 @@ fn parse_lock_target(target: &str) -> Option<u32> {
 }
 
 /// A profile lock as found on disk, before deciding who holds it. A struct
-/// rather than an enum so that every platform builds every shape: Windows
-/// locks never name their owner.
+/// rather than an enum so that every platform builds every shape.
 #[derive(Debug)]
 struct RawLock {
     /// Whether a lock file exists.
     present: bool,
     /// The owner it names, e.g. the Unix `lock` symlink target `IP:+PID`.
     owner: Option<String>,
+    /// Whether the OS reports the lock as held open by a process (Windows:
+    /// Firefox keeps `parent.lock` open while it runs). `None` when unknown.
+    held: Option<bool>,
+}
+
+impl RawLock {
+    const ABSENT: Self = Self {
+        present: false,
+        owner: None,
+        held: None,
+    };
 }
 
 /// Who holds `dir`. Only reading the lock and checking a PID differ per OS;
@@ -363,10 +367,12 @@ fn classify_lock(lock: RawLock, alive: impl Fn(u32) -> bool) -> LockState {
     if !lock.present {
         return LockState::Free;
     }
-    match lock.owner.as_deref().and_then(parse_lock_target) {
-        Some(pid) if alive(pid) => LockState::Live(pid),
-        Some(pid) => LockState::Stale(pid),
-        None => LockState::Unknown,
+    match (lock.held, lock.owner.as_deref().and_then(parse_lock_target)) {
+        (Some(true), pid) => LockState::Live(pid),
+        (Some(false), pid) => LockState::Stale(pid),
+        (None, Some(pid)) if alive(pid) => LockState::Live(Some(pid)),
+        (None, Some(pid)) => LockState::Stale(Some(pid)),
+        (None, None) => LockState::Unknown,
     }
 }
 
@@ -377,20 +383,47 @@ fn read_lock(dir: &Path) -> RawLock {
         Ok(target) => RawLock {
             present: true,
             owner: Some(target.to_string_lossy().into_owned()),
+            held: None,
         },
-        Err(_) => RawLock {
-            present: false,
-            owner: None,
-        },
+        Err(_) => RawLock::ABSENT,
     }
 }
 
-/// Firefox's `parent.lock`, which does not name its owner.
-#[cfg(not(unix))]
+/// Firefox's `parent.lock`, which names no owner but stays open while
+/// Firefox runs. Opening it without sharing fails with a sharing violation
+/// exactly while any process has it open.
+#[cfg(windows)]
 fn read_lock(dir: &Path) -> RawLock {
+    use std::os::windows::fs::OpenOptionsExt;
+    /// `ERROR_SHARING_VIOLATION`.
+    const SHARING_VIOLATION: i32 = 32;
+    let opened = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(dir.join("parent.lock"));
+    let held = match opened {
+        Ok(_) => Some(false),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return RawLock::ABSENT,
+        Err(err) if err.raw_os_error() == Some(SHARING_VIOLATION) => Some(true),
+        Err(_) => None,
+    };
     RawLock {
-        present: dir.join("parent.lock").exists(),
+        present: true,
         owner: None,
+        held,
+    }
+}
+
+/// Other platforms: a `parent.lock` whose owner cannot be told.
+#[cfg(not(any(unix, windows)))]
+fn read_lock(dir: &Path) -> RawLock {
+    match dir.join("parent.lock").exists() {
+        true => RawLock {
+            present: true,
+            owner: None,
+            held: None,
+        },
+        false => RawLock::ABSENT,
     }
 }
 
@@ -572,7 +605,7 @@ mod tests {
             &ProfileMode::Persistent(dir.path().to_path_buf()),
             dir.path(),
         );
-        assert_eq!(profile.read_port_file().unwrap(), None);
+        assert_eq!(read_port_file(profile.dir().unwrap()).unwrap(), None);
     }
 
     /// PRF-09: The port file is parsed into the BiDi port; malformed content is a PortFile error.
@@ -608,7 +641,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let pid = std::process::id();
         std::os::unix::fs::symlink(format!("127.0.1.1:+{pid}"), dir.path().join("lock")).unwrap();
-        assert_eq!(lock_state(dir.path()), LockState::Live(pid));
+        assert_eq!(lock_state(dir.path()), LockState::Live(Some(pid)));
     }
 
     /// PRF-11: A dead-PID lock is reported Stale and does not block prepare.
@@ -618,7 +651,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let dead = dead_pid();
         std::os::unix::fs::symlink(format!("127.0.1.1:+{dead}"), dir.path().join("lock")).unwrap();
-        assert_eq!(lock_state(dir.path()), LockState::Stale(dead));
+        assert_eq!(lock_state(dir.path()), LockState::Stale(Some(dead)));
         let profile = prepare(
             &ProfileMode::Persistent(dir.path().to_path_buf()),
             dir.path(),
@@ -666,60 +699,97 @@ mod tests {
             &name,
             old,
             EPHEMERAL_SWEEP_AGE,
-            LockState::Live(1)
+            LockState::Live(Some(1))
         ));
         assert!(sweepable(
             &name,
             old,
             EPHEMERAL_SWEEP_AGE,
-            LockState::Stale(1)
+            LockState::Stale(Some(1))
         ));
         assert!(sweepable(&name, old, EPHEMERAL_SWEEP_AGE, LockState::Free));
     }
 
-    /// PRF-20: Lock classification is the same pure function on every OS.
+    /// PRF-23: Lock classification is the same pure function on every OS.
     #[test]
     fn lock_classification_is_platform_neutral() {
         // Given a liveness check that knows only PID 7 is running
         let alive = |pid: u32| pid == 7;
-        // Then no lock is Free, an unreadable lock is Unknown,
-        // and a PID-carrying lock is Live or Stale
-        let absent = RawLock {
-            present: false,
-            owner: None,
-        };
-        assert_eq!(classify_lock(absent, alive), LockState::Free);
-        let opaque = RawLock {
+        let lock = |owner: Option<&str>, held| RawLock {
             present: true,
-            owner: None,
+            owner: owner.map(str::to_owned),
+            held,
         };
-        assert_eq!(classify_lock(opaque, alive), LockState::Unknown);
-        let target = |s: &str| RawLock {
-            present: true,
-            owner: Some(s.to_string()),
-        };
-        assert_eq!(classify_lock(target("h:+7"), alive), LockState::Live(7));
-        assert_eq!(classify_lock(target("h:+8"), alive), LockState::Stale(8));
-        assert_eq!(classify_lock(target("garbage"), alive), LockState::Unknown);
+        // Then no lock is Free and an unreadable one Unknown
+        assert_eq!(classify_lock(RawLock::ABSENT, alive), LockState::Free);
+        assert_eq!(classify_lock(lock(None, None), alive), LockState::Unknown);
+        assert_eq!(
+            classify_lock(lock(Some("garbage"), None), alive),
+            LockState::Unknown
+        );
+        // And a PID-carrying lock (Unix) is Live or Stale by that PID
+        assert_eq!(
+            classify_lock(lock(Some("h:+7"), None), alive),
+            LockState::Live(Some(7))
+        );
+        assert_eq!(
+            classify_lock(lock(Some("h:+8"), None), alive),
+            LockState::Stale(Some(8))
+        );
+        // And a lock the OS reports as held or not (Windows) wins over any PID
+        assert_eq!(
+            classify_lock(lock(None, Some(true)), alive),
+            LockState::Live(None)
+        );
+        assert_eq!(
+            classify_lock(lock(None, Some(false)), alive),
+            LockState::Stale(None)
+        );
     }
 
-    /// PRF-21: On Windows a parent.lock is Unknown and an old locked dir survives the sweep.
-    #[cfg(not(unix))]
+    /// PRF-24: On Windows a parent.lock held open is Live (profile refused, never swept); a closed one is Stale.
+    #[cfg(windows)]
     #[test]
-    fn windows_parent_lock_is_unknown_and_kept() {
-        // Given an old-enough ephemeral dir holding a parent.lock, and one without
+    fn windows_parent_lock_liveness() {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Given two old-enough ephemeral dirs with a parent.lock, one held open like Firefox does
         let root = tempfile::tempdir().unwrap();
-        let locked = root.path().join(format!("{EPHEMERAL_PREFIX}locked"));
-        let free = root.path().join(format!("{EPHEMERAL_PREFIX}free"));
-        std::fs::create_dir_all(&locked).unwrap();
-        std::fs::create_dir_all(&free).unwrap();
-        std::fs::write(locked.join("parent.lock"), b"").unwrap();
-        assert_eq!(lock_state(&locked), LockState::Unknown);
-        // When the sweep runs with a zero age limit
+        let held = root.path().join(format!("{EPHEMERAL_PREFIX}held"));
+        let stale = root.path().join(format!("{EPHEMERAL_PREFIX}stale"));
+        std::fs::create_dir_all(&held).unwrap();
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::write(stale.join("parent.lock"), b"").unwrap();
+        let _firefox = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .share_mode(0)
+            .open(held.join("parent.lock"))
+            .unwrap();
+        // Then the held one is Live and the other Stale
+        assert_eq!(lock_state(&held), LockState::Live(None));
+        assert_eq!(lock_state(&stale), LockState::Stale(None));
+        // And a persistent profile on the held dir is refused
+        let prefs = prefs();
+        let mode = ProfileMode::Persistent(held.clone());
+        let spec = ProfileSpec {
+            mode: &mode,
+            bidi_port: 1,
+            ephemeral_root: root.path(),
+            prefs: &prefs,
+        };
+        assert!(matches!(
+            Profile::prepare(&spec),
+            Err(ProfileError::Locked { .. })
+        ));
+        // And the sweep removes only the stale one
         sweep_orphans(root.path(), Duration::ZERO);
-        // Then only the lock-free dir is removed
-        assert!(locked.exists(), "an unknown owner is never deleted");
-        assert!(!free.exists(), "a lock-free orphan is swept");
+        assert!(
+            held.exists(),
+            "a running Firefox's profile is never deleted"
+        );
+        assert!(!stale.exists(), "a stale orphan is swept");
     }
 
     /// PRF-14: The sweep deletes only old, prefixed, unlocked directories.
