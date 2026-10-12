@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-12
+
+### Fixed
+- Windows: a persistent profile in use by a running Firefox is now detected
+  (its `parent.lock` is held open) and refused with `ProfileError::Locked`,
+  instead of a launch that Firefox hands to the running instance; the
+  orphaned-profile sweep only removes ephemeral profiles whose lock is not
+  held.
+- Windows: Firefox and every process it starts run in a Job Object, so
+  killing it (stop fallback, drop, startup timeout, cancelled launch) leaves
+  no content or launcher process behind.
+- Dropping a managed browser, or cancelling `Browser::ensure` while Firefox
+  starts, now waits (bounded) for the killed process to exit before its
+  ephemeral profile is removed, with or without a Tokio runtime.
+
+### Added
+- CI runs the real-Firefox tests on Windows too, and fails if any Firefox
+  process outlives them; a new real-Firefox test checks that a profile in
+  use is refused.
+
 ## [0.1.0] - 2026-10-12
 
 ### Added
@@ -101,5 +121,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ConfigError::PerPortProfileNeedsPort`: `PersistentPerPort` needs a fixed
   BiDi port.
 
-[Unreleased]: https://github.com/raultov/bidi-browser-lite/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/raultov/bidi-browser-lite/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/raultov/bidi-browser-lite/compare/v0.1.0...v0.1.2
 [0.1.0]: https://github.com/raultov/bidi-browser-lite/releases/tag/v0.1.0
