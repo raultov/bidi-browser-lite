@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `test-support`: `MockBidi` records incoming commands (`commands()`, `commands_named()`, `clear_commands()`, `wait_for_command()`) with method, parameters, and connection ID.
+- `test-support`: `MockBidi::emit()` pushes events to the session connection; `MockBidi::respond_with()` overrides command replies or errors.
+
 ## [0.1.2] - 2026-10-12
 
 ### Fixed

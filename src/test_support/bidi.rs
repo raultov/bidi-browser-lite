@@ -40,6 +40,19 @@ enum Owner {
 }
 
 /// The browser the mock pretends to be.
+/// A command received by [`MockBidi`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecordedCommand {
+    /// The method name (e.g. `browsingContext.navigate`).
+    pub method: String,
+    /// The parsed command parameters, or `Value::Null` if absent.
+    pub params: Value,
+    /// The identifier of the connection that sent it.
+    pub connection: u64,
+}
+
+type Responder = Box<dyn Fn(&Value) -> Value + Send + Sync>;
+
 struct State {
     behavior: MockBidiBehavior,
     mute: bool,
@@ -47,6 +60,9 @@ struct State {
     owner: Option<Owner>,
     closed: bool,
     counts: HashMap<String, usize>,
+    commands: Vec<RecordedCommand>,
+    responders: HashMap<String, Responder>,
+    senders: HashMap<u64, tokio::sync::mpsc::UnboundedSender<Value>>,
     contexts: Vec<(String, String)>,
     next_context: u64,
 }
@@ -54,6 +70,7 @@ struct State {
 struct Shared {
     state: Mutex<State>,
     closed: Notify,
+    command_arrived: Notify,
 }
 
 impl Shared {
@@ -95,10 +112,14 @@ impl MockBidi {
                 owner,
                 closed: false,
                 counts: HashMap::new(),
+                commands: Vec::new(),
+                responders: HashMap::new(),
+                senders: HashMap::new(),
                 contexts: vec![("ctx-0".to_owned(), "about:home".to_owned())],
                 next_context: 1,
             }),
             closed: Notify::new(),
+            command_arrived: Notify::new(),
         });
         let serving = Arc::clone(&shared);
         let server = Server::start(port, move |stream, id| {
@@ -172,6 +193,84 @@ impl MockBidi {
         self.shared.lock().session_new_delay = Some(delay);
     }
 
+    /// Every command received in arrival order.
+    pub fn commands(&self) -> Vec<RecordedCommand> {
+        self.shared.lock().commands.clone()
+    }
+
+    /// Commands named `method` in arrival order.
+    pub fn commands_named(&self, method: &str) -> Vec<RecordedCommand> {
+        self.shared
+            .lock()
+            .commands
+            .iter()
+            .filter(|c| c.method == method)
+            .cloned()
+            .collect()
+    }
+
+    /// Empties the command record.
+    pub fn clear_commands(&self) {
+        self.shared.lock().commands.clear();
+    }
+
+    /// Waits until a command named `method` arrives, or `timeout` expires.
+    pub async fn wait_for_command(
+        &self,
+        method: &str,
+        timeout: std::time::Duration,
+    ) -> Option<RecordedCommand> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let notified = self.shared.command_arrived.notified();
+            {
+                let state = self.shared.lock();
+                if let Some(cmd) = state.commands.iter().rev().find(|c| c.method == method) {
+                    return Some(cmd.clone());
+                }
+            }
+            if tokio::time::timeout_at(deadline, notified).await.is_err() {
+                let state = self.shared.lock();
+                return state
+                    .commands
+                    .iter()
+                    .rev()
+                    .find(|c| c.method == method)
+                    .cloned();
+            }
+        }
+    }
+
+    /// Pushes a BiDi event to the session owner's connection (or all connections).
+    pub fn emit(&self, method: &str, params: Value) {
+        let event = json!({
+            "type": "event",
+            "method": method,
+            "params": params,
+        });
+        let state = self.shared.lock();
+        if let Some(Owner::Connection(conn)) = state.owner
+            && let Some(tx) = state.senders.get(&conn)
+        {
+            let _ = tx.send(event);
+            return;
+        }
+        for tx in state.senders.values() {
+            let _ = tx.send(event.clone());
+        }
+    }
+
+    /// Overrides the reply for command `method`.
+    pub fn respond_with<F>(&self, method: &str, responder: F)
+    where
+        F: Fn(&Value) -> Value + Send + Sync + 'static,
+    {
+        self.shared
+            .lock()
+            .responders
+            .insert(method.to_owned(), Box::new(responder));
+    }
+
     /// Gives the session to a foreign client.
     pub fn occupy_session(&self) {
         self.shared.lock().owner = Some(Owner::Foreign);
@@ -199,38 +298,83 @@ async fn answer_http(mut stream: TcpStream) {
     let _ = stream.write_all(response.as_bytes()).await;
 }
 
+struct ConnectionGuard {
+    conn: u64,
+    shared: Arc<Shared>,
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        self.shared.lock().senders.remove(&self.conn);
+    }
+}
+
 async fn serve_ws(stream: TcpStream, conn: u64, shared: Arc<Shared>) {
     let Ok(mut ws) = tokio_tungstenite::accept_async(stream).await else {
         return;
     };
-    while let Some(Ok(message)) = ws.next().await {
-        let Message::Text(text) = message else {
-            continue;
-        };
-        let reply = handle(&shared, conn, &text);
-        let (value, close) = match reply {
-            Reply::Silent => (None, false),
-            Reply::Delayed(value, delay) => {
-                tokio::time::sleep(delay).await;
-                (Some(value), false)
-            }
-            Reply::Send(value) => (Some(value), false),
-            Reply::SendThenClose(value) => (Some(value), true),
-            Reply::Close => (None, true),
-        };
-        if let Some(value) = value
-            && ws.send(Message::text(value.to_string())).await.is_err()
-        {
-            break;
-        }
-        if close {
-            let _ = ws.close(None).await;
-            break;
-        }
-    }
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
+    shared.lock().senders.insert(conn, tx);
+    let _guard = ConnectionGuard {
+        conn,
+        shared: Arc::clone(&shared),
+    };
+    run_ws_loop(&mut ws, &mut rx, conn, &shared).await;
     if shared.lock().closed {
         shared.closed.notify_waiters();
     }
+}
+
+async fn run_ws_loop(
+    ws: &mut tokio_tungstenite::WebSocketStream<TcpStream>,
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<Value>,
+    conn: u64,
+    shared: &Shared,
+) {
+    loop {
+        tokio::select! {
+            message = ws.next() => match message {
+                Some(Ok(Message::Text(text))) => {
+                    if dispatch_incoming(shared, conn, ws, &text).await {
+                        let _ = ws.close(None).await;
+                        break;
+                    }
+                }
+                Some(Ok(_)) => {}
+                _ => break,
+            },
+            Some(event) = rx.recv() => {
+                if ws.send(Message::text(event.to_string())).await.is_err() {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+async fn dispatch_incoming(
+    shared: &Shared,
+    conn: u64,
+    ws: &mut tokio_tungstenite::WebSocketStream<TcpStream>,
+    text: &str,
+) -> bool {
+    let reply = handle(shared, conn, text);
+    let (value, close) = match reply {
+        Reply::Silent => (None, false),
+        Reply::Delayed(value, delay) => {
+            tokio::time::sleep(delay).await;
+            (Some(value), false)
+        }
+        Reply::Send(value) => (Some(value), false),
+        Reply::SendThenClose(value) => (Some(value), true),
+        Reply::Close => (None, true),
+    };
+    if let Some(value) = value
+        && ws.send(Message::text(value.to_string())).await.is_err()
+    {
+        return true;
+    }
+    close
 }
 
 /// One parsed command.
@@ -257,13 +401,34 @@ fn handle(shared: &Shared, conn: u64, text: &str) -> Reply {
     };
     let mut state = shared.lock();
     *state.counts.entry(cmd.method.clone()).or_default() += 1;
+    state.commands.push(RecordedCommand {
+        method: cmd.method.clone(),
+        params: cmd.params.clone(),
+        connection: conn,
+    });
+    shared.command_arrived.notify_waiters();
     if state.mute {
         return Reply::Silent;
     }
+    dispatch_command(&mut state, conn, &cmd)
+}
+
+fn dispatch_command(state: &mut State, conn: u64, cmd: &Command) -> Reply {
     let owns = state.owner == Some(Owner::Connection(conn));
+    if let Some(responder) = state.responders.get(&cmd.method) {
+        if !owns && cmd.method != "session.status" && cmd.method != "session.new" {
+            return Reply::Send(reply(fx::INVALID_SESSION_ID, cmd.id));
+        }
+        let mut custom = responder(&cmd.params);
+        if custom.is_object() && custom.get("type").is_some() {
+            custom["id"] = Value::from(cmd.id);
+            return Reply::Send(custom);
+        }
+        return Reply::Send(success(cmd.id, custom));
+    }
     match cmd.method.as_str() {
-        "session.status" => Reply::Send(status(&state, cmd.id)),
-        "session.new" => session_new(&mut state, conn, cmd.id),
+        "session.status" => Reply::Send(status(state, cmd.id)),
+        "session.new" => session_new(state, conn, cmd.id),
         "session.end" if owns => {
             state.owner = None;
             Reply::SendThenClose(reply(fx::SESSION_END, cmd.id))
@@ -275,7 +440,7 @@ fn handle(shared: &Shared, conn: u64, text: &str) -> Reply {
             Reply::SendThenClose(reply(fx::BROWSER_CLOSE, cmd.id))
         }
         "session.subscribe" => Reply::Send(reply(fx::SUBSCRIBE, cmd.id)),
-        method if method.starts_with("browsingContext.") => Reply::Send(contexts(&mut state, &cmd)),
+        method if method.starts_with("browsingContext.") => Reply::Send(contexts(state, cmd)),
         _ => Reply::Send(success(cmd.id, json!({}))),
     }
 }
@@ -523,5 +688,117 @@ mod tests {
             .await;
         assert!(started.is_err());
         assert!(mock.session_active());
+    }
+
+    /// MCK-14: MockBidi records commands in arrival order with method, params, and connection.
+    #[tokio::test]
+    async fn records_commands_in_order() {
+        let mock = MockBidi::start(MockBidiBehavior::Ready).await.unwrap();
+        let client = session(&mock).await;
+        let _ = client
+            .send_raw_command(
+                "browsingContext.navigate",
+                json!({
+                    "context": "ctx-0",
+                    "url": "https://example.com/test",
+                    "wait": "complete"
+                }),
+            )
+            .await;
+        let commands = mock.commands();
+        assert_eq!(commands.len(), 3);
+        assert_eq!(commands[0].method, "session.status");
+        assert_eq!(commands[1].method, "session.new");
+        assert_eq!(commands[2].method, "browsingContext.navigate");
+        assert_eq!(commands[2].params["url"], "https://example.com/test");
+        assert_eq!(commands[2].params["wait"], "complete");
+        let named = mock.commands_named("browsingContext.navigate");
+        assert_eq!(named.len(), 1);
+        assert_eq!(named[0], commands[2]);
+    }
+
+    /// MCK-15: MockBidi wait_for_command resolves on arrival and returns None on timeout.
+    #[tokio::test]
+    async fn wait_for_command_resolves_and_times_out() {
+        let mock = MockBidi::start(MockBidiBehavior::Ready).await.unwrap();
+        let _client = session(&mock).await;
+        let cmd = mock
+            .wait_for_command("session.new", Duration::from_millis(500))
+            .await;
+        assert!(cmd.is_some());
+        assert_eq!(cmd.unwrap().method, "session.new");
+
+        let port = mock.port();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let raw_client = BidiClient::connect(&format!("ws://127.0.0.1:{port}/session"), T)
+                .await
+                .unwrap();
+            let _ = raw_client.status().await;
+        });
+        let cmd2 = mock
+            .wait_for_command("session.status", Duration::from_secs(1))
+            .await;
+        assert!(cmd2.is_some());
+        assert_eq!(cmd2.unwrap().method, "session.status");
+
+        let none = mock
+            .wait_for_command("nonexistent.command", Duration::from_millis(50))
+            .await;
+        assert!(none.is_none());
+    }
+
+    /// MCK-16: MockBidi emit pushes a BiDi event to the session owner connection.
+    #[tokio::test]
+    async fn emit_pushes_event_to_owner() {
+        let mock = MockBidi::start(MockBidiBehavior::Ready).await.unwrap();
+        let client = session(&mock).await;
+        let mut events = client.subscribe();
+        mock.emit(
+            "browsingContext.load",
+            json!({
+                "context": "ctx-0",
+                "url": "https://example.com/loaded"
+            }),
+        );
+        let event = tokio::time::timeout(Duration::from_secs(1), events.recv())
+            .await
+            .expect("event received within timeout")
+            .expect("event stream open");
+        assert!(event.is_event());
+        assert_eq!(event.method.as_deref(), Some("browsingContext.load"));
+        assert_eq!(event.params.unwrap()["url"], "https://example.com/loaded");
+    }
+
+    /// MCK-17: MockBidi clear_commands empties the command record.
+    #[tokio::test]
+    async fn clear_commands_empties_record() {
+        let mock = MockBidi::start(MockBidiBehavior::Ready).await.unwrap();
+        let _client = session(&mock).await;
+        assert!(!mock.commands().is_empty());
+        mock.clear_commands();
+        assert!(mock.commands().is_empty());
+        assert_eq!(mock.count("session.new"), 1);
+    }
+
+    /// MCK-18: MockBidi respond_with overrides the reply for a specific method.
+    #[tokio::test]
+    async fn respond_with_overrides_reply() {
+        let mock = MockBidi::start(MockBidiBehavior::Ready).await.unwrap();
+        mock.respond_with("script.evaluate", |_params| {
+            json!({
+                "type": "error",
+                "error": "javascript error",
+                "message": "custom scripted evaluation error"
+            })
+        });
+        let client = session(&mock).await;
+        let result = client
+            .send_raw_command("script.evaluate", json!({"expression": "1+1"}))
+            .await;
+        assert!(
+            matches!(result, Err(BidiError::ProtocolError { ref error, ref message, .. })
+                if error == "javascript error" && message == "custom scripted evaluation error")
+        );
     }
 }

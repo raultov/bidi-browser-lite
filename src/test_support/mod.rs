@@ -15,7 +15,7 @@ mod fixtures;
 mod rdp;
 mod server;
 
-pub use bidi::{MockBidi, MockBidiBehavior};
+pub use bidi::{MockBidi, MockBidiBehavior, RecordedCommand};
 pub use rdp::MockRdp;
 
 use std::io;
