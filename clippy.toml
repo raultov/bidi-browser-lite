@@ -39,3 +39,12 @@ allow-panic-in-tests = true
 
 # --- Measured curves (appended at every phase gate) ---
 # Format: <lint>: <value> -> <violations> | ... (date, phase)
+# Phase 0 (2026-10-11, scaffolding): no code, every lint 0 at every value.
+# Phases 2-5 (2026-10-12; error, config, discovery, ports, probe, test_support; 80 unit tests):
+#   too_many_lines: 50 -> 0 | 40 -> 0 | 30 -> 1
+#   cognitive_complexity: 12 -> 0 | 10 -> 0 | 8 -> 1
+#   too_many_arguments: 4 -> 0 | 3 -> 1
+#   excessive_nesting: 5 -> 0 | 4 -> 0 | 3 -> 0
+#   type_complexity: 150 -> 0 | 100 -> 1
+# Thresholds left as they are until the final measurement (as bidi-lite did):
+# browser.rs and process.rs, the code that will stress them, do not exist yet.
