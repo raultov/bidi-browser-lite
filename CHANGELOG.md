@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-12
+
 ### Added
 - `test-support`: `MockBidi` records incoming commands (`commands()`, `commands_named()`, `clear_commands()`, `wait_for_command()`) with method, parameters, and connection ID.
 - `test-support`: `MockBidi::emit()` pushes events to the session connection; `MockBidi::respond_with()` overrides command replies or errors.
@@ -127,6 +129,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ConfigError::PerPortProfileNeedsPort`: `PersistentPerPort` needs a fixed
   BiDi port.
 
-[Unreleased]: https://github.com/raultov/bidi-browser-lite/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/raultov/bidi-browser-lite/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/raultov/bidi-browser-lite/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/raultov/bidi-browser-lite/compare/v0.1.0...v0.1.2
 [0.1.0]: https://github.com/raultov/bidi-browser-lite/releases/tag/v0.1.0
