@@ -23,9 +23,10 @@ type-complexity-threshold = 150
 # clippy::excessive_nesting (default: 0 = disabled). knot-lite's target.
 excessive-nesting-threshold = 5
 
-# clippy::too_many_lines (pedantic, default: 100). Applies to tests too: long
+# clippy::too_many_lines (pedantic, default: 100). Started at 50, ratcheted to
+# 40 at the final measurement (0 violations). Applies to tests too: long
 # tests are split into Given/When/Then helpers (docs/specs 00 §9.3).
-too-many-lines-threshold = 50
+too-many-lines-threshold = 40
 
 # clippy::cognitive_complexity (nursery, default: 25). bidi-lite ratcheted it
 # from 15 to 12 at its final measurement. tracing macros may inflate the score.
@@ -44,7 +45,7 @@ allow-panic-in-tests = true
 #   too_many_lines: 50 -> 0 | 40 -> 0 | 30 -> 1
 #   cognitive_complexity: 12 -> 0 | 10 -> 0 | 8 -> 1
 #   too_many_arguments: 4 -> 0 | 3 -> 1
-#   excessive_nesting: 5 -> 0 | 4 -> 0 | 3 -> 0
+#   excessive_nesting: (invalid: grepped "too deep", the message is "too nested")
 #   type_complexity: 150 -> 0 | 100 -> 1
 # Thresholds left as they are until the final measurement (as bidi-lite did):
 # browser.rs and process.rs, the code that will stress them, do not exist yet.
@@ -52,6 +53,14 @@ allow-panic-in-tests = true
 #   too_many_lines: 50 -> 0 | 40 -> 0 | 30 -> 4
 #   cognitive_complexity: 12 -> 0 | 10 -> 1 | 8 -> 2
 #   too_many_arguments: 4 -> 0 | 3 -> 4
-#   excessive_nesting: 5 -> 0 | 4 -> 0 | 3 -> 0
+#   excessive_nesting: (invalid: grepped "too deep", the message is "too nested")
 #   type_complexity: 150 -> 0 | 100 -> 1
 # Ratchet decided at the final measurement (phase 11).
+# Final measurement (2026-10-12, phase 11; 148 unit + 40 integration + 4 doctests, 5 examples):
+#   too_many_lines: 50 -> 0 | 40 -> 0 | 35 -> 1 | 30 -> 5
+#   cognitive_complexity: 12 -> 0 | 10 -> 1 | 8 -> 2
+#   too_many_arguments: 4 -> 0 | 3 -> 4
+#   excessive_nesting: 5 -> 0 | 4 -> 1 | 3 -> 15 | 2 -> 150
+#   type_complexity: 150 -> 0 | 100 -> 6
+# Ratchet applied: too-many-lines-threshold 50 -> 40 (0 violations). The
+# others have violations at the next stricter value and stay.
