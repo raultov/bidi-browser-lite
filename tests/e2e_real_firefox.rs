@@ -18,6 +18,7 @@ fn launch() -> BrowserConfigBuilder {
         .mode(LaunchMode::LaunchNew)
         .headless(headless)
         .startup_timeout(Duration::from_secs(30))
+        .command_timeout(Duration::from_secs(30))
 }
 
 /// A scratch directory Firefox can see: snap Firefox cannot see the host
