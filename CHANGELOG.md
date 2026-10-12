@@ -7,12 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-12
+
 ### Added
 - `test-support`: real Firefox 157 RDP fixtures for `websocket`, `error-message`, and `css-message` watcher resources (`fixtures::RDP_RESOURCES_*`), plus a synthetic `platform-message` fixture.
 - `test-support`: `MockRdp` honours `resourceTypes` in `watchResources`, only sending initial sources when requested, and records watched types (`watched_resources()`).
 - `test-support`: `MockRdp::emit_resources()`, `MockRdp::emit_resource_updates()`, and `MockRdp::emit_packet()` allow emitting any watcher resource notification from the active target actor.
 - Re-exported `parse_resources` from `bidi_lite::rdp::resources` at crate root.
 - Dependencies: updated `bidi-lite` to 0.1.2 for watcher resource APIs.
+
+### Fixed
+- Integration tests: eliminated startup timeout race in `helper_pid` by polling for the PID file to be written.
 
 ## [0.1.3] - 2026-10-12
 
@@ -136,7 +141,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ConfigError::PerPortProfileNeedsPort`: `PersistentPerPort` needs a fixed
   BiDi port.
 
-[Unreleased]: https://github.com/raultov/bidi-browser-lite/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/raultov/bidi-browser-lite/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/raultov/bidi-browser-lite/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/raultov/bidi-browser-lite/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/raultov/bidi-browser-lite/compare/v0.1.0...v0.1.2
 [0.1.0]: https://github.com/raultov/bidi-browser-lite/releases/tag/v0.1.0
