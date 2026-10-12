@@ -26,10 +26,29 @@ pub(crate) const RDP_LIST_TABS: &str = include_str!("fixtures/rdp/list_tabs.json
 pub(crate) const RDP_GET_ROOT: &str = include_str!("fixtures/rdp/get_root.json");
 pub(crate) const RDP_UNRECOGNIZED: &str =
     include_str!("fixtures/rdp/unrecognized_packet_type.json");
+pub(crate) const RDP_GET_WATCHER: &str = include_str!("fixtures/rdp/get_watcher.json");
+pub(crate) const RDP_TARGET_AVAILABLE: &str = include_str!("fixtures/rdp/target_available.json");
+pub(crate) const RDP_TARGET_DESTROYED: &str = include_str!("fixtures/rdp/target_destroyed.json");
+pub(crate) const RDP_RESOURCES_SOURCES: &str = include_str!("fixtures/rdp/resources_sources.json");
+pub(crate) const RDP_BREAKPOINT_POSITIONS: &str =
+    include_str!("fixtures/rdp/breakpoint_positions.json");
+pub(crate) const RDP_THREAD_STATE_PAUSED: &str =
+    include_str!("fixtures/rdp/thread_state_paused.json");
+pub(crate) const RDP_THREAD_STATE_RESUMED: &str =
+    include_str!("fixtures/rdp/thread_state_resumed.json");
+pub(crate) const RDP_RESOURCES_THREAD_STATE_PAUSED: &str =
+    include_str!("fixtures/rdp/resources_thread_state_paused.json");
+pub(crate) const RDP_RESOURCES_THREAD_STATE_RESUMED: &str =
+    include_str!("fixtures/rdp/resources_thread_state_resumed.json");
+pub(crate) const RDP_FRAMES: &str = include_str!("fixtures/rdp/frames.json");
+pub(crate) const RDP_EVALUATE_REPLY: &str = include_str!("fixtures/rdp/evaluate_reply.json");
+pub(crate) const RDP_EVALUATION_RESULT: &str = include_str!("fixtures/rdp/evaluation_result.json");
+pub(crate) const RDP_SOURCE_LONG_STRING: &str =
+    include_str!("fixtures/rdp/source_long_string.json");
 
 /// Every embedded fixture, for the parse test.
 #[cfg(test)]
-pub(crate) const ALL: [&str; 18] = [
+pub(crate) const ALL: [&str; 31] = [
     SESSION_STATUS_READY,
     SESSION_STATUS_BUSY,
     SESSION_NEW,
@@ -48,6 +67,19 @@ pub(crate) const ALL: [&str; 18] = [
     RDP_LIST_TABS,
     RDP_GET_ROOT,
     RDP_UNRECOGNIZED,
+    RDP_GET_WATCHER,
+    RDP_TARGET_AVAILABLE,
+    RDP_TARGET_DESTROYED,
+    RDP_RESOURCES_SOURCES,
+    RDP_BREAKPOINT_POSITIONS,
+    RDP_THREAD_STATE_PAUSED,
+    RDP_THREAD_STATE_RESUMED,
+    RDP_RESOURCES_THREAD_STATE_PAUSED,
+    RDP_RESOURCES_THREAD_STATE_RESUMED,
+    RDP_FRAMES,
+    RDP_EVALUATE_REPLY,
+    RDP_EVALUATION_RESULT,
+    RDP_SOURCE_LONG_STRING,
 ];
 
 /// Parses a fixture. They are compile-time constants checked by a unit test,

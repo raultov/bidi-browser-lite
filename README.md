@@ -237,7 +237,7 @@ bidi-browser-lite = { version = "0.1", features = ["test-support"] }
 
 ```rust,no_run
 use bidi_browser_lite::test_support::{MockBidiBehavior, MockFirefox};
-use bidi_browser_lite::{Browser, BrowserConfig, BrowserError, LaunchMode};
+use bidi_browser_lite::{Browser, BrowserConfig, BrowserError, Debugger, LaunchMode};
 
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 let firefox = MockFirefox::start(true).await?; // BiDi + RDP on 127.0.0.1:0
@@ -249,6 +249,16 @@ let config = BrowserConfig::builder()
 let browser = Browser::ensure(config).await?;
 browser.new_tab("https://example.com/").await?;
 assert_eq!(firefox.bidi().count("session.new"), 1);
+
+// Assert recorded command parameters:
+let created = firefox.bidi().commands_named("browsingContext.create");
+assert!(!created.is_empty());
+
+// Drive the RDP debugger against the mock in-process:
+let rdp_client = browser.rdp_client().await?;
+let debugger = Debugger::attach_selected(&rdp_client).await?;
+assert!(!debugger.sources().is_empty());
+
 browser.stop().await?;
 
 // The one-session rule, simulated:
@@ -260,10 +270,15 @@ assert!(matches!(Browser::ensure(config).await, Err(BrowserError::SessionBusy { 
 ```
 
 `MockBidi` behaviours: `Ready`, `SessionBusy`, `CloseOnSessionNew`,
-`SilentPeer`, `PlainHttp`; plus `drop_connections()` (the session survives as
-an orphan, like Firefox), `release_session()`, `occupy_session()`,
-`stop_replying()`, `count(method)`, `connection_count()`. `MockRdp` greets as
-the root actor or stays silent.
+`SilentPeer`, `PlainHttp`; plus `commands()`, `commands_named()`,
+`wait_for_command()`, `emit()`, `respond_with()`, `drop_connections()` (the
+session survives as an orphan, like Firefox), `release_session()`,
+`occupy_session()`, `stop_replying()`, `count(method)`, `connection_count()`.
+
+`MockRdp` serves the full `bidi_lite::rdp::Debugger` lifecycle from captured
+Firefox 157 frames (tabs, watcher, breakpoint list, sources with long strings,
+stepping, frame evaluation, `pause()`, and `navigate()`) and records requests
+(`requests()`, `requests_to()`, `wait_for_request()`, `clear_requests()`).
 
 The `fake_firefox_helper` binary (same feature) stands in for Firefox in
 launch tests: point `firefox_path` at it and pick a behaviour with the

@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `test-support`: `MockBidi` records incoming commands (`commands()`, `commands_named()`, `clear_commands()`, `wait_for_command()`) with method, parameters, and connection ID.
 - `test-support`: `MockBidi::emit()` pushes events to the session connection; `MockBidi::respond_with()` overrides command replies or errors.
+- `test-support`: `MockRdp` (and `MockRdpDebugger`) serves the full Firefox RDP `Debugger` protocol flow from captured Firefox 157 frames (tab descriptors, watcher bootstrap, sources, breakpoints, stepping, frame evaluation, `pause()`, and `navigate()`).
+- `test-support`: `MockRdp` records incoming requests (`requests()`, `requests_to()`, `clear_requests()`, `wait_for_request()`) with target actor, request type, and parameters.
 
 ## [0.1.2] - 2026-10-12
 

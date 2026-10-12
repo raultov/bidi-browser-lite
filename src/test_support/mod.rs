@@ -16,7 +16,10 @@ mod rdp;
 mod server;
 
 pub use bidi::{MockBidi, MockBidiBehavior, RecordedCommand};
-pub use rdp::MockRdp;
+pub use rdp::{MockRdp, RecordedRdpRequest};
+
+/// Alias for [`MockRdp`].
+pub type MockRdpDebugger = MockRdp;
 
 use std::io;
 

@@ -1,20 +1,20 @@
 {
-  "from": "root",
   "tabs": [
     {
-      "actor": "server1.conn3.tabDescriptor1",
-      "browserId": 9,
-      "browsingContextID": 10,
+      "actor": "server1.conn1.tabDescriptor1",
+      "browserId": 2,
+      "browsingContextID": 3,
       "isZombieTab": false,
-      "outerWindowID": 20,
+      "outerWindowID": 24,
       "selected": true,
-      "title": "New Tab",
+      "title": "BiDi Spike Test",
       "traits": {
-        "supportsNavigation": true,
+        "watcher": true,
         "supportsReloadDescriptor": true,
-        "watcher": true
+        "supportsNavigation": true
       },
-      "url": "about:home"
+      "url": "https://example.com/test.html"
     }
-  ]
+  ],
+  "from": "root"
 }
