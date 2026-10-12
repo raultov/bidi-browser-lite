@@ -7,28 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- Windows: the crate failed to build with `-D warnings` because the profile
-  lock code used only on Unix was dead code there. Lock classification is
-  now one platform-neutral function; only reading the lock and checking a
-  PID differ per OS.
-
-### Changed
-- Windows: the orphaned ephemeral-profile sweep now runs too. It removes only
-  directories with no `parent.lock` (a lock's owner cannot be checked there,
-  so a locked profile is never deleted).
-- CI: every push to `master` creates the GitHub release of the `Cargo.toml`
-  version (tag included, on that commit) when that version has none yet,
-  once every check passes; pushes that do not bump the version skip it.
-
 ## [0.1.0] - 2026-10-12
 
 ### Added
 - Project scaffolding: quality gates (`make check`: fmt, clippy, tests, docs,
   duplication), `AGENTS.md`, MIT licence.
 - CI on Linux, macOS and Windows, a real-Firefox job on Ubuntu, and a release
-  job: pushing a version tag creates its GitHub release with that version's
-  CHANGELOG section as notes, once every check passes.
+  job: once every check passes, a push to `master` creates the GitHub release
+  of the `Cargo.toml` version (and its tag) if it has none yet, with that
+  version's CHANGELOG section as notes; a pushed version tag does the same
+  for that tag.
 - `error` module: `BrowserError` (`#[non_exhaustive]`) with typed details
   `ConfigError`, `ProfileError` and `EarlyExitReason` (derived from Firefox's
   exit code: 0 = profile handed to a running instance, 69 = port in use).
@@ -63,8 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its argv to `FAKE_FIREFOX_ARGS_LOG`.
 - `profile` module: ephemeral profiles (under `$HOME/snap/firefox/common/`
   for snap Firefox, the temp dir otherwise) removed on stop or drop, with an
-  orphan sweep on Unix; persistent and per-port profiles refused while a
-  running Firefox holds them; a managed `user.js` block that preserves the
+  orphan sweep (on Windows it removes only profiles without a
+  `parent.lock`, whose owner cannot be checked); persistent and per-port
+  profiles refused while a running Firefox holds them (on Unix, where the
+  lock names its PID); a managed `user.js` block that preserves the
   user's own prefs; Firefox's `WebDriverBiDiServer.json` port file.
 - `process` module: Firefox spawned with null stdio, readiness of the BiDi
   port (and the RDP port when enabled) checked with the side-effect free
