@@ -91,7 +91,16 @@ pub fn helper_config(mode: &str) -> (bidi_browser_lite::BrowserConfigBuilder, te
 
 /// The PID the helper wrote to its scratch directory.
 pub fn helper_pid(scratch: &tempfile::TempDir) -> u32 {
-    std::fs::read_to_string(scratch.path().join("pid"))
+    let path = scratch.path().join("pid");
+    for _ in 0..50 {
+        if let Ok(content) = std::fs::read_to_string(&path)
+            && let Ok(pid) = content.trim().parse()
+        {
+            return pid;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    std::fs::read_to_string(&path)
         .unwrap()
         .trim()
         .parse()
