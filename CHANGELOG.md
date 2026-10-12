@@ -28,3 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Edition, Nightly; system and `~/Applications`) and Windows (`ProgramFiles`,
   `ProgramFiles(x86)`, `LOCALAPPDATA`, then `PATH` with `PATHEXT`);
   `FIREFOX_PATH` wins and a wrong value is an error. `is_snap_firefox()`.
+- `ports` module: `PortAllocator` (`reserve_near`, `reserve_pair` for a BiDi
+  + RDP pair under one lock, `is_reserved`), `PortSearch`, `PairRequest`,
+  `PortPair` and `PortReservation`, released synchronously on drop.
