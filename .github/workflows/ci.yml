@@ -44,9 +44,15 @@ jobs:
         run: make dupes
   firefox:
     # The #[ignore]d real-Firefox tests (tests/e2e_real_firefox.rs), headless,
-    # against a non-snap Firefox installed by the action. macOS and Windows run
-    # only the hermetic checks above: real-browser support there is untested.
-    runs-on: ubuntu-latest
+    # against a Firefox installed by the action, on Linux and Windows. macOS
+    # runs only the hermetic checks above: real-browser support there is
+    # untested. The last step fails if any Firefox process outlived the tests
+    # (Windows: the Job Object must take the whole process tree down).
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -58,6 +64,16 @@ jobs:
         env:
           BIDI_BROWSER_LITE_HEADLESS: "1"
         run: cargo test --all-features --test e2e_real_firefox -- --ignored --test-threads=1
+      - name: No Firefox process left behind (Linux)
+        if: runner.os == 'Linux'
+        run: sleep 2; if pgrep -a firefox; then exit 1; fi
+      - name: No Firefox process left behind (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Start-Sleep -Seconds 2
+          $left = Get-Process firefox -ErrorAction SilentlyContinue
+          if ($left) { $left | Format-Table Id, ProcessName; exit 1 }
   release:
     # Every push to master releases the Cargo.toml version if it has no GitHub
     # release yet (the tag is created on that commit); pushes that do not bump
