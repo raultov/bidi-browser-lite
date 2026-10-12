@@ -18,12 +18,14 @@ mod obtain;
 mod state;
 
 pub use state::BrowserState;
+use state::SessionCheck;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use bidi_lite::browser::{BrowserClient, ContextInfo};
 use bidi_lite::client::BidiClient;
+use bidi_lite::error::BidiError;
 use bidi_lite::rdp::client::RdpClient;
 use bidi_lite::tab::Tab;
 use tokio::sync::{Mutex, MutexGuard};
@@ -92,10 +94,15 @@ impl Browser {
     /// The browser-level client over the same session as [`Browser::client`].
     pub async fn browser_client(&self) -> Result<BrowserClient, BrowserError> {
         let mut state = self.live_state().await?;
-        if let Some(session) = state.live_session(self.config.timeouts.connect).await {
-            return Ok(session);
+        let limit = self.config.timeouts.connect;
+        match state.check_session(limit).await {
+            SessionCheck::Alive(session) => Ok(session),
+            SessionCheck::Unresponsive => Err(BrowserError::Bidi(BidiError::Timeout {
+                method: "session.status".to_owned(),
+                timeout: limit,
+            })),
+            SessionCheck::Dead => self.reopen_session(&mut state).await,
         }
-        self.reopen_session(&mut state).await
     }
 
     /// The Firefox debugger (RDP) client, cached and reconnected when its

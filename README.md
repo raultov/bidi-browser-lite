@@ -145,7 +145,7 @@ profile of that port (`PersistentPerPort`: another manager's instance).
 | `LaunchNew` | P | nothing | launch on P |
 | `LaunchNew` | P | anything | `PortConflict` |
 | `Auto` | P | nothing | launch on P |
-| `Auto` | P | not BiDi, or owned | launch on a free port above P |
+| `Auto` | P | not BiDi, or owned (Unix only) | launch on a free port above P |
 | `Auto` | P | BiDi, session free | attach |
 | `Auto` | P | BiDi, session taken | `SessionBusy` |
 
@@ -166,8 +166,12 @@ connection can end it. This crate therefore:
   ours), and returns `BrowserError::SessionBusy` for an **attached** one,
   which it never signals.
 
-Always call `stop()` on an attached browser: dropping it ends the session in
-the background on a best-effort basis only.
+Always call `stop()` on an attached browser (and on one kept alive with
+`keep_alive_on_drop`): dropping it only *tries* to end the session in a
+background task, which never runs if the Tokio runtime is shutting down
+(e.g. at the end of `#[tokio::main]`). A session that does not answer
+`session.status` in time is reported as a `Timeout` and kept, never
+replaced: replacing it would orphan our own session.
 
 ## Ports
 
@@ -192,9 +196,12 @@ the background on a best-effort basis only.
 The library writes its prefs in a **managed block** of `user.js`
 (`// BEGIN bidi-browser-lite` … `// END bidi-browser-lite`), rewritten on
 every launch; anything you put outside the block is preserved. Your own
-`pref(..)` values come last, so they win. A persistent profile held by a
-running Firefox is refused (`ProfileError::Locked`): a second Firefox on it
-would silently hand the launch over to the running one.
+`pref(..)` values come last, so they win. Prefs that leave the block are
+also removed from `prefs.js`, where Firefox keeps a copy. On Unix a
+persistent profile held by a running Firefox is refused
+(`ProfileError::Locked`): a second Firefox on it would silently hand the
+launch over to the running one. On Windows the lock's owner is not checked,
+so that case surfaces as `EarlyExit { reason: ProfileInUse }` instead.
 
 ## Coming from cdp-browser-lite
 
@@ -270,8 +277,10 @@ launch tests: point `firefox_path` at it and pick a behaviour with the
   without it) and `devtools.debugger.prompt-connection = false`: any local
   process that connects can drive the browser with full privileges, with no
   prompt. RDP is therefore off by default, the prefs are written only while
-  it is enabled (and removed from a persistent profile on the next launch
-  without it), and the port is bound to localhost.
+  it is enabled, and Firefox binds the port to localhost. On a persistent
+  profile, the next launch without RDP drops them from the managed block
+  and from `prefs.js` (where Firefox copies `user.js` prefs); that removal
+  is unit-tested but **untested against a real Firefox**.
 - The BiDi port also gives full control of the browser to local processes.
   Firefox only accepts a loopback `Host` header and rejects any `Origin`
   header (verified with Firefox 157), so other machines and web pages cannot
@@ -316,6 +325,12 @@ launch tests: point `firefox_path` at it and pick a behaviour with the
 - Flatpak Firefox is not supported. Chrome over BiDi is not supported in 0.1.
 - Pairing a BiDi tab with an RDP tab descriptor is left to the caller (by
   URL or selected tab).
+- `BrowserPool` entries are snapshots taken at `open`: after a `restart` or
+  an `auto_relaunch` with a Firefox-picked BiDi port or an allocated RDP
+  port, ask the `Browser` (`debug_address`, `rdp_address`) for the current
+  ports.
+- Windows: `--wait-for-browser` is passed so the spawned process is the
+  browser, not Firefox's short-lived launcher; untested on a real Windows.
 
 ## Development
 

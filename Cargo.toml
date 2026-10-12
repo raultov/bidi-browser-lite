@@ -10,7 +10,7 @@ repository = "https://github.com/raultov/bidi-browser-lite"
 license = "MIT"
 keywords = ["webdriver", "bidi", "firefox", "browser", "automation"]
 categories = ["web-programming", "development-tools::testing", "asynchronous"]
-exclude = [".gitignore", "examples/*", "docs/*", "tests/*", "Makefile", "dupes.toml", "clippy.toml", "AGENTS.md"]
+exclude = [".gitignore", ".github/*", "examples/*", "docs/*", "tests/*", "Makefile", "dupes.toml", "clippy.toml", "AGENTS.md"]
 
 [features]
 # In-process BiDi/RDP mocks and the `fake_firefox_helper` binary, for this

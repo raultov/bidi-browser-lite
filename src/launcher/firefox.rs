@@ -23,6 +23,9 @@ pub(crate) struct LaunchPlan<'a> {
     pub(crate) profile_dir: &'a Path,
     /// The browser configuration.
     pub(crate) config: &'a BrowserConfig,
+    /// Windows' `firefox.exe` starts a short-lived launcher process unless
+    /// told to wait for the browser (Puppeteer passes this flag there too).
+    pub(crate) wait_for_browser: bool,
 }
 
 /// The Firefox command line, in a stable order; the user's extra arguments
@@ -38,6 +41,9 @@ pub(crate) fn build_args(plan: &LaunchPlan<'_>) -> Vec<OsString> {
     args.push("--no-remote".into());
     args.push("--profile".into());
     args.push(plan.profile_dir.as_os_str().to_owned());
+    if plan.wait_for_browser {
+        args.push("--wait-for-browser".into());
+    }
     if plan.config.headless {
         args.push("--headless".into());
     }
@@ -142,6 +148,7 @@ mod tests {
             rdp_port: rdp,
             profile_dir: Path::new("/p"),
             config: &config,
+            wait_for_browser: false,
         };
         build_args(&plan)
             .iter()
@@ -312,6 +319,21 @@ mod tests {
                 "--x",
             ]
         );
+    }
+
+    /// LCH-15: --wait-for-browser is passed when asked (Windows' launcher process).
+    #[test]
+    fn wait_for_browser_flag() {
+        let config = launch().build();
+        let plan = |wait| LaunchPlan {
+            bidi_port: 0,
+            rdp_port: None,
+            profile_dir: Path::new("/p"),
+            config: &config,
+            wait_for_browser: wait,
+        };
+        assert!(build_args(&plan(true)).contains(&"--wait-for-browser".into()));
+        assert!(!build_args(&plan(false)).contains(&"--wait-for-browser".into()));
     }
 
     /// LCH-14: Enabling RDP adds remote-enabled, chrome.enabled and prompt-connection=false.

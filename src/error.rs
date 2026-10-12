@@ -177,7 +177,7 @@ pub enum ConfigError {
     PerPortProfileNeedsPort,
     /// An attached Firefox's RDP port cannot be discovered.
     #[error(
-        "AttachOnly with RDP needs an explicit rdp_port: an attached Firefox's RDP port cannot be discovered"
+        "AttachOnly and Auto with RDP need an explicit rdp_port: an attached Firefox's RDP port cannot be discovered"
     )]
     RdpPortRequired,
     /// Firefox prefs cannot carry proxy credentials.

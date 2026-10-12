@@ -323,9 +323,9 @@ async fn test_from_state_opens_session_lazily() {
     assert_eq!(mock.count("session.new"), 1);
 }
 
-/// BRW-36: A session that no longer answers is never handed out.
+/// BRW-36: A session that does not answer in time is neither handed out nor dropped.
 #[tokio::test]
-async fn unresponsive_session_is_not_handed_out() {
+async fn unresponsive_session_is_not_handed_out_nor_dropped() {
     // Given an attached browser whose Firefox stops answering
     let mock = mock(MockBidiBehavior::Ready).await;
     let config = attach_only(mock.port())
@@ -335,9 +335,38 @@ async fn unresponsive_session_is_not_handed_out() {
     mock.stop_replying();
     // When a client is requested
     let result = browser.browser_client().await.map(drop);
-    // Then it fails instead of returning the dead session
+    // Then it times out, and the session is kept: no new session, no restart
     assert!(
-        matches!(result, Err(BrowserError::RemoteUnavailable { .. })),
+        matches!(
+            result,
+            Err(BrowserError::Bidi(
+                bidi_lite::error::BidiError::Timeout { .. }
+            ))
+        ),
         "{result:?}"
     );
+    assert_eq!(mock.count("session.new"), 1);
+    assert!(
+        browser.state.lock().await.session.is_some(),
+        "a slow session is still ours"
+    );
+}
+
+/// BRW-37: A cancelled attach does not leave an orphan session in a Firefox we do not own.
+#[tokio::test]
+async fn cancelled_attach_ends_its_session() {
+    // Given a Firefox whose session.new reply is slow
+    let mock = mock(MockBidiBehavior::Ready).await;
+    mock.delay_session_new(Duration::from_millis(400));
+    // When ensure is cancelled while session.new is in flight
+    let ensure = Browser::ensure(attach_only(mock.port()).build());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), ensure)
+            .await
+            .is_err()
+    );
+    // Then the session it created is ended once the reply arrives
+    let ended =
+        crate::test_support_wait(|| mock.count("session.end") == 1 && !mock.session_active()).await;
+    assert!(ended, "the orphaned session must be ended");
 }

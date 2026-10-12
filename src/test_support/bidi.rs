@@ -43,6 +43,7 @@ enum Owner {
 struct State {
     behavior: MockBidiBehavior,
     mute: bool,
+    session_new_delay: Option<std::time::Duration>,
     owner: Option<Owner>,
     closed: bool,
     counts: HashMap<String, usize>,
@@ -64,6 +65,7 @@ impl Shared {
 /// What to do after a command.
 enum Reply {
     Silent,
+    Delayed(Value, std::time::Duration),
     Send(Value),
     SendThenClose(Value),
     Close,
@@ -89,6 +91,7 @@ impl MockBidi {
             state: Mutex::new(State {
                 behavior,
                 mute: false,
+                session_new_delay: None,
                 owner,
                 closed: false,
                 counts: HashMap::new(),
@@ -163,6 +166,12 @@ impl MockBidi {
         self.shared.lock().mute = true;
     }
 
+    /// Delays every successful `session.new` reply (a slow Firefox, to test
+    /// cancellation while the command is in flight).
+    pub fn delay_session_new(&self, delay: std::time::Duration) {
+        self.shared.lock().session_new_delay = Some(delay);
+    }
+
     /// Gives the session to a foreign client.
     pub fn occupy_session(&self) {
         self.shared.lock().owner = Some(Owner::Foreign);
@@ -201,6 +210,10 @@ async fn serve_ws(stream: TcpStream, conn: u64, shared: Arc<Shared>) {
         let reply = handle(&shared, conn, &text);
         let (value, close) = match reply {
             Reply::Silent => (None, false),
+            Reply::Delayed(value, delay) => {
+                tokio::time::sleep(delay).await;
+                (Some(value), false)
+            }
             Reply::Send(value) => (Some(value), false),
             Reply::SendThenClose(value) => (Some(value), true),
             Reply::Close => (None, true),
@@ -280,9 +293,10 @@ fn session_new(state: &mut State, conn: u64, id: u64) -> Reply {
         return Reply::Send(reply(fx::SESSION_NEW_BUSY, id));
     }
     state.owner = Some(Owner::Connection(conn));
-    match state.behavior {
-        MockBidiBehavior::CloseOnSessionNew => Reply::Close,
-        _ => Reply::Send(reply(fx::SESSION_NEW, id)),
+    match (state.behavior, state.session_new_delay) {
+        (MockBidiBehavior::CloseOnSessionNew, _) => Reply::Close,
+        (_, Some(delay)) => Reply::Delayed(reply(fx::SESSION_NEW, id), delay),
+        (_, None) => Reply::Send(reply(fx::SESSION_NEW, id)),
     }
 }
 

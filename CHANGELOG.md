@@ -84,5 +84,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cdp-browser-lite equivalence table, test support, security,
   troubleshooting, and supported platforms with what is untested. Its code
   blocks compile as doctests.
+- Fixes from the code review, each with a test: a slow `session.status`
+  no longer makes `browser_client` drop (and orphan) the browser's own
+  session; `Auto`/`AttachOnly` with `rdp(true)` are refused (an attached
+  Firefox's RDP port cannot be discovered); prefs that leave the managed
+  block are removed from `prefs.js`; a cancelled `ensure` ends the session
+  its in-flight `session.new` creates; a dropped managed browser removes its
+  profile only after the process exited; `--wait-for-browser` on Windows;
+  the user agent is redacted from `BrowserConfig`'s `Debug`.
 - `ConfigError::PerPortProfileNeedsPort`: `PersistentPerPort` needs a fixed
   BiDi port.

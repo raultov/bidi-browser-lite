@@ -159,14 +159,32 @@ pub(crate) async fn open_session(
     let client = tokio::time::timeout(config.timeouts.connect, connect)
         .await
         .map_err(|_| unavailable())??;
-    match client.start_session(default_capabilities()).await {
-        Ok(_) => Ok(BrowserClient::from_client(client)),
+    match start_session_detached(client).await {
+        Ok(client) => Ok(BrowserClient::from_client(client)),
         Err(BidiError::SessionNotCreated(_)) => Err(BrowserError::SessionBusy {
             host: host.to_owned(),
             port,
         }),
         Err(err) => Err(err.into()),
     }
+}
+
+/// `session.new` in its own task: if the caller is cancelled while the
+/// command is in flight, the task still gets the session and ends it, so a
+/// cancelled attach never leaves an orphan in a Firefox we do not own.
+async fn start_session_detached(client: BidiClient) -> Result<BidiClient, BidiError> {
+    let (reply, result) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let started = client
+            .start_session(default_capabilities())
+            .await
+            .map(|_| client);
+        if let Err(Ok(orphan)) = reply.send(started) {
+            debug!("ensure was cancelled during session.new; ending the session");
+            let _ = orphan.end_session().await;
+        }
+    });
+    result.await.unwrap_or(Err(BidiError::Disconnected))
 }
 
 /// Launches a managed Firefox, waits for its ports and opens its session.
@@ -215,7 +233,8 @@ fn reserve_near(
     base: u16,
 ) -> Result<PortReservation, BrowserError> {
     let search = PortSearch::new(config.host.clone(), base, NEAR_TRIES);
-    allocator.reserve_near(&search, |port| !per_port_owned(&config.profile, port))
+    let accept = |port| Some(port) != config.rdp && !per_port_owned(&config.profile, port);
+    allocator.reserve_near(&search, accept)
 }
 
 fn firefox_path(config: &BrowserConfig) -> Result<PathBuf, BrowserError> {
@@ -258,6 +277,7 @@ async fn spawn(
         rdp_port: rdp,
         profile_dir: &profile_dir,
         config,
+        wait_for_browser: cfg!(windows),
     };
     let spec = SpawnSpec {
         path,

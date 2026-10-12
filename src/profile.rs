@@ -28,6 +28,8 @@ pub const EPHEMERAL_SWEEP_AGE: Duration = Duration::from_secs(60 * 60);
 pub const PORT_FILE: &str = "WebDriverBiDiServer.json";
 
 const USER_JS: &str = "user.js";
+/// Where Firefox persists every pref, `user.js` ones included.
+const PREFS_JS: &str = "prefs.js";
 const BLOCK_BEGIN: &str = "// BEGIN bidi-browser-lite (managed block, rewritten on every launch)";
 const BLOCK_END: &str = "// END bidi-browser-lite";
 
@@ -199,7 +201,57 @@ fn write_user_js(dir: &Path, prefs: &[(String, PrefValue)]) -> Result<(), Profil
         prefs.len(),
         path.display()
     );
-    std::fs::write(&path, merge_user_js(&existing, &render_block(prefs))).map_err(failed)
+    let stale: Vec<String> = block_pref_names(&existing)
+        .into_iter()
+        .filter(|old| !names.contains(&old.as_str()))
+        .collect();
+    std::fs::write(&path, merge_user_js(&existing, &render_block(prefs))).map_err(failed)?;
+    prune_prefs_js(&dir.join(PREFS_JS), &stale)
+}
+
+/// The pref names set by the managed block of a `user.js` text.
+fn block_pref_names(user_js: &str) -> Vec<String> {
+    let Some(start) = user_js.find(BLOCK_BEGIN) else {
+        return Vec::new();
+    };
+    let block = &user_js[start..];
+    let block = &block[..block.find(BLOCK_END).unwrap_or(block.len())];
+    block
+        .lines()
+        .filter_map(pref_name)
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The name in a `user_pref("name", value);` line.
+fn pref_name(line: &str) -> Option<&str> {
+    let rest = line.trim_start().strip_prefix("user_pref(\"")?;
+    rest.split_once('"').map(|(name, _)| name)
+}
+
+/// Firefox copies `user.js` prefs into `prefs.js`, so a pref that leaves the
+/// managed block (RDP turned off, proxy removed) would stay in force. Its
+/// lines are removed from `prefs.js` before the launch.
+fn prune_prefs_js(path: &Path, stale: &[String]) -> Result<(), ProfileError> {
+    if stale.is_empty() {
+        return Ok(());
+    }
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Ok(());
+    };
+    debug!(
+        "removing {} stale managed prefs from {}: {stale:?}",
+        stale.len(),
+        path.display()
+    );
+    let kept: String = text
+        .split_inclusive('\n')
+        .filter(|line| pref_name(line).is_none_or(|name| !stale.iter().any(|s| s == name)))
+        .collect();
+    std::fs::write(path, kept).map_err(|source| ProfileError::UserJs {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 /// The managed block for `prefs`.
@@ -448,6 +500,32 @@ mod tests {
             format!("{before}{}{after}", render_block(&prefs()))
         );
         assert!(dir.path().exists(), "persistent dirs survive drop");
+    }
+
+    /// PRF-22: Prefs that leave the managed block are removed from prefs.js.
+    #[test]
+    fn prefs_leaving_the_block_are_pruned_from_prefs_js() {
+        // Given a persistent profile launched once with RDP prefs, which Firefox copied to prefs.js
+        let dir = tempfile::tempdir().unwrap();
+        let mode = ProfileMode::Persistent(dir.path().to_path_buf());
+        let with_rdp = [("devtools.chrome.enabled".to_owned(), PrefValue::Bool(true))];
+        let spec = ProfileSpec {
+            mode: &mode,
+            bidi_port: 1,
+            ephemeral_root: dir.path(),
+            prefs: &with_rdp,
+        };
+        drop(Profile::prepare(&spec).unwrap());
+        let prefs_js = "// Mozilla User Preferences\nuser_pref(\"devtools.chrome.enabled\", true);\nuser_pref(\"kept.pref\", 1);\n";
+        std::fs::write(dir.path().join(PREFS_JS), prefs_js).unwrap();
+        // When it is prepared again without them
+        drop(prepare(&mode, dir.path()));
+        // Then prefs.js no longer sets them, and keeps everything else
+        let after = std::fs::read_to_string(dir.path().join(PREFS_JS)).unwrap();
+        assert_eq!(
+            after,
+            "// Mozilla User Preferences\nuser_pref(\"kept.pref\", 1);\n"
+        );
     }
 
     /// PRF-08: A stale port file is deleted before launch.

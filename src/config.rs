@@ -39,7 +39,9 @@ pub enum ProfileMode {
     /// A fixed directory that survives restarts.
     Persistent(PathBuf),
     /// One persistent directory per BiDi port: `root/<prefix><port>`, so
-    /// several `Auto` instances can coexist and each reattaches to its own.
+    /// several `Auto` instances can coexist: `Auto` skips a port whose
+    /// per-port profile a running Firefox holds (another manager's instance)
+    /// and launches on a free port above it.
     PersistentPerPort {
         /// Parent directory.
         root: PathBuf,
@@ -278,7 +280,8 @@ impl BrowserConfig {
 
     fn check_rdp(&self) -> Result<(), ConfigError> {
         match self.rdp {
-            Some(0) if !self.launches() => Err(ConfigError::RdpPortRequired),
+            // Auto may attach, and an attached Firefox's RDP port cannot be discovered.
+            Some(0) if self.mode != LaunchMode::LaunchNew => Err(ConfigError::RdpPortRequired),
             Some(port) if port != 0 && port == self.port => Err(ConfigError::PortClash { port }),
             _ => Ok(()),
         }
@@ -310,7 +313,7 @@ impl fmt::Debug for BrowserConfig {
             .field("extra_args", &self.extra_args.len())
             .field("extra_prefs", &pref_names)
             .field("window_size", &self.window_size)
-            .field("user_agent", &self.user_agent)
+            .field("user_agent", &self.user_agent.as_ref().map(|_| "<set>"))
             .field("timeouts", &self.timeouts)
             .field("keep_alive_on_drop", &self.keep_alive_on_drop)
             .field("auto_relaunch", &self.auto_relaunch)
@@ -817,6 +820,8 @@ mod tests {
             shown.contains("TOKEN") && shown.contains("x.secret"),
             "{shown}"
         );
+        let ua = format!("{:?}", launch_new().user_agent("UA-SECRET").build());
+        assert!(!ua.contains("UA-SECRET"), "{ua}");
         for secret in ["abc123", "\"pw\"", "127.0.0.1:1"] {
             assert!(!shown.contains(secret), "{secret} leaked: {shown}");
         }
@@ -852,16 +857,18 @@ mod tests {
         );
     }
 
-    /// CFG-21: AttachOnly with RDP needs an explicit RDP port.
+    /// CFG-21: AttachOnly and Auto with RDP need an explicit RDP port.
     #[test]
-    fn attach_only_with_rdp_needs_rdp_port() {
-        let base = BrowserConfig::builder()
-            .mode(LaunchMode::AttachOnly)
-            .port(9222);
-        assert_eq!(
-            base.clone().rdp(true).build().validate(),
-            Err(ConfigError::RdpPortRequired)
-        );
-        assert_eq!(base.rdp_port(6000).build().validate(), Ok(()));
+    fn attaching_modes_with_rdp_need_rdp_port() {
+        for mode in [LaunchMode::AttachOnly, LaunchMode::Auto] {
+            let base = BrowserConfig::builder().mode(mode).port(9222);
+            assert_eq!(
+                base.clone().rdp(true).build().validate(),
+                Err(ConfigError::RdpPortRequired),
+                "{mode:?}"
+            );
+            assert_eq!(base.rdp_port(6000).build().validate(), Ok(()), "{mode:?}");
+        }
+        assert_eq!(launch_new().rdp(true).build().validate(), Ok(()));
     }
 }

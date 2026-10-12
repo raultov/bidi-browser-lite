@@ -5,6 +5,7 @@
 use std::time::Duration;
 
 use bidi_lite::browser::BrowserClient;
+use bidi_lite::error::BidiError;
 use bidi_lite::rdp::client::RdpClient;
 use tracing::warn;
 
@@ -17,6 +18,16 @@ use crate::profile::Profile;
 const CLOSE_WAIT: Duration = Duration::from_secs(5);
 /// SIGTERM grace before the kill when Firefox did not exit by itself.
 const TERM_GRACE: Duration = Duration::from_secs(2);
+
+/// What [`BrowserState::check_session`] found.
+pub(crate) enum SessionCheck {
+    /// The session answers.
+    Alive(BrowserClient),
+    /// No session, or its connection is gone.
+    Dead,
+    /// Connected, but `session.status` did not answer in time.
+    Unresponsive,
+}
 
 /// Everything one browser owns. `Drop` lives here, not on `Browser`, so the
 /// safety net never needs the `Browser`'s mutex.
@@ -94,15 +105,20 @@ impl BrowserState {
         self.keep_alive_on_drop = keep_alive_on_drop;
     }
 
-    /// The session, if its connection still answers. `is_connected` alone is
-    /// not enough: a connection whose tasks died without a close frame (a
-    /// dropped runtime, a half-open socket) still reports connected, so a
-    /// side-effect free `session.status` is sent, bounded by `limit`.
-    pub(crate) async fn live_session(&self, limit: Duration) -> Option<BrowserClient> {
-        let session = self.session.clone().filter(|s| s.client().is_connected())?;
+    /// Whether the session still works. `is_connected` alone is not enough:
+    /// a connection whose tasks died without a close frame (a dropped
+    /// runtime) still reports connected, so a side-effect free
+    /// `session.status` is sent, bounded by `limit`. Only a disconnect makes
+    /// a session dead; a slow reply does not (Firefox may just be busy, and
+    /// dropping our own live session would orphan it).
+    pub(crate) async fn check_session(&self, limit: Duration) -> SessionCheck {
+        let Some(session) = self.session.clone().filter(|s| s.client().is_connected()) else {
+            return SessionCheck::Dead;
+        };
         match tokio::time::timeout(limit, session.client().status()).await {
-            Ok(Ok(_)) => Some(session),
-            _ => None,
+            Ok(Err(BidiError::Disconnected)) => SessionCheck::Dead,
+            Ok(_) => SessionCheck::Alive(session),
+            Err(_) => SessionCheck::Unresponsive,
         }
     }
 
@@ -158,8 +174,10 @@ impl Drop for BrowserState {
             return;
         }
         if self.managed && !self.keep_alive_on_drop {
-            // The process and profile guards kill Firefox (which frees its
-            // session) and remove an ephemeral profile.
+            // Killing Firefox frees its session. The profile is removed only
+            // once the process has exited (a dying Firefox may still write
+            // to it); without a runtime the guards do it synchronously.
+            reap_in_background(self.process.take(), self.profile.take());
             return;
         }
         if let Some(process) = self.process.as_mut() {
@@ -176,6 +194,20 @@ impl Drop for BrowserState {
             end_in_background(session);
         }
     }
+}
+
+/// Kills `process`, waits for it to exit, then drops `profile` (removing an
+/// ephemeral directory), in a task when a runtime is available.
+fn reap_in_background(process: Option<FirefoxProcess>, profile: Option<Profile>) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    runtime.spawn(async move {
+        if let Some(mut process) = process {
+            process.terminate(Duration::ZERO).await;
+        }
+        drop(profile);
+    });
 }
 
 /// Best-effort `session.end` from a synchronous context: a Firefox that keeps
