@@ -24,8 +24,10 @@ name = "fake_firefox_helper"
 path = "src/bin/fake_firefox_helper.rs"
 required-features = ["test-support"]
 
+# Integration tests spawning the fake helper: one binary, a module per area.
 [[test]]
-name = "fake_helper"
+name = "integration"
+path = "tests/integration/main.rs"
 required-features = ["test-support"]
 
 [lints.rust]

@@ -12,6 +12,7 @@
 //! | `serve_session_busy` | as `serve`, with the session held by a foreign client |
 //! | `rdp_silent` | as `serve`, but the RDP port never greets |
 //! | `ignore_sigterm` | as `serve`, ignoring SIGTERM (Unix) |
+//! | `stubborn` | as `ignore_sigterm`, and `browser.close` does not make it exit |
 //! | `handoff` | exit 0 after 200 ms without binding (live-locked profile) |
 //! | `port_in_use` | exit 69 after 200 ms without binding (BiDi port taken) |
 //! | `exit_immediately` | exit 1 |
@@ -20,10 +21,15 @@
 //! `FAKE_FIREFOX_ARGS_LOG` names a file that gets one line per run: the
 //! arguments separated by NUL. `FAKE_FIREFOX_ENV_PROBE` names an environment
 //! variable whose presence (never its value) is appended to that log.
+//! `FAKE_FIREFOX_PID_FILE` names a file that gets the helper's PID.
+//! `FAKE_FIREFOX_DROP_AFTER_MS`: once the first session exists, every BiDi
+//! socket is dropped after that many milliseconds, leaving the session
+//! orphaned (what a crashed client does to Firefox).
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::Duration;
 
 use bidi_browser_lite::test_support::{MockBidi, MockBidiBehavior, MockRdp};
@@ -75,9 +81,16 @@ fn log_invocation(args: &[String]) {
     }
 }
 
+fn write_pid_file() {
+    if let Some(path) = std::env::var_os("FAKE_FIREFOX_PID_FILE") {
+        let _ = std::fs::write(path, std::process::id().to_string());
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     log_invocation(&args);
+    write_pid_file();
     let mode = std::env::var("FAKE_FIREFOX_MODE").unwrap_or_else(|_| "serve".to_owned());
     match mode.as_str() {
         "exit_immediately" => ExitCode::from(1),
@@ -113,23 +126,10 @@ fn run_serve(mode: &str, args: &Args) -> ExitCode {
 }
 
 async fn serve(mode: &str, args: &Args) -> std::io::Result<()> {
-    if mode == "ignore_sigterm" {
-        ignore_sigterm()?;
-    }
-    if let Some(profile) = &args.profile {
-        lock_profile(profile)?;
-    }
-    let behavior = match mode {
-        "serve_session_busy" => MockBidiBehavior::SessionBusy,
-        _ => MockBidiBehavior::Ready,
-    };
+    prepare(mode, args)?;
     let requested = args.bidi_port.unwrap_or(0);
-    let bidi = MockBidi::start_on(requested, behavior).await?;
-    let _rdp = match (args.rdp_port, mode) {
-        (Some(port), "rdp_silent") => Some(MockRdp::start_silent_on(port).await?),
-        (Some(port), _) => Some(MockRdp::start_on(port).await?),
-        (None, _) => None,
-    };
+    let bidi = Arc::new(MockBidi::start_on(requested, bidi_behavior(mode)).await?);
+    let _rdp = start_rdp(mode, args.rdp_port).await?;
     let port_file = args
         .profile
         .as_deref()
@@ -137,11 +137,57 @@ async fn serve(mode: &str, args: &Args) -> std::io::Result<()> {
     if let (0, Some(path)) = (requested, &port_file) {
         write_port_file(path, bidi.port())?;
     }
+    tokio::spawn(orphan_session_later(Arc::clone(&bidi)));
     bidi.wait_browser_closed().await;
+    if mode == "stubborn" {
+        std::future::pending::<()>().await;
+    }
     if let Some(path) = port_file {
         let _ = std::fs::remove_file(path);
     }
     Ok(())
+}
+
+/// Signal handling and the profile lock, before any port is bound.
+fn prepare(mode: &str, args: &Args) -> std::io::Result<()> {
+    if matches!(mode, "ignore_sigterm" | "stubborn") {
+        ignore_sigterm()?;
+    }
+    match &args.profile {
+        Some(profile) => lock_profile(profile),
+        None => Ok(()),
+    }
+}
+
+fn bidi_behavior(mode: &str) -> MockBidiBehavior {
+    match mode {
+        "serve_session_busy" => MockBidiBehavior::SessionBusy,
+        _ => MockBidiBehavior::Ready,
+    }
+}
+
+async fn start_rdp(mode: &str, port: Option<u16>) -> std::io::Result<Option<MockRdp>> {
+    match (port, mode) {
+        (Some(port), "rdp_silent") => MockRdp::start_silent_on(port).await.map(Some),
+        (Some(port), _) => MockRdp::start_on(port).await.map(Some),
+        (None, _) => Ok(None),
+    }
+}
+
+/// Drops every BiDi socket once, `FAKE_FIREFOX_DROP_AFTER_MS` after the
+/// first session appears, so that session becomes an orphan.
+async fn orphan_session_later(bidi: Arc<MockBidi>) {
+    let Some(delay) = std::env::var("FAKE_FIREFOX_DROP_AFTER_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    else {
+        return;
+    };
+    while !bidi.session_active() {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(delay)).await;
+    bidi.drop_connections();
 }
 
 fn write_port_file(path: &Path, port: u16) -> std::io::Result<()> {

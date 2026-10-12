@@ -10,7 +10,7 @@
 
 use std::collections::HashSet;
 use std::net::TcpListener;
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 
 use crate::error::BrowserError;
 
@@ -168,6 +168,12 @@ impl PortAllocator {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
+}
+
+/// The process-wide allocator used by `Browser::ensure`.
+pub(crate) fn default_allocator() -> Arc<PortAllocator> {
+    static DEFAULT: OnceLock<Arc<PortAllocator>> = OnceLock::new();
+    Arc::clone(DEFAULT.get_or_init(PortAllocator::new))
 }
 
 fn take_fixed(reserved: &mut HashSet<u16>, port: u16) -> Result<u16, BrowserError> {
@@ -362,6 +368,12 @@ mod tests {
             a.reserve_pair(&req),
             Err(BrowserError::PortConflict { .. })
         ));
+    }
+
+    /// PRT-10: The default allocator is a process-wide singleton.
+    #[test]
+    fn default_allocator_is_a_singleton() {
+        assert!(Arc::ptr_eq(&default_allocator(), &default_allocator()));
     }
 
     /// PRT-11: A poisoned allocator mutex still serves reservations.

@@ -81,7 +81,7 @@ pub enum BrowserError {
         /// BiDi port of the busy browser.
         port: u16,
     },
-    /// `Browser::rdp_client` was called
+    /// [`Browser::rdp_client`](crate::browser::Browser::rdp_client) was called
     /// on a browser configured without RDP, which is opt-in for security.
     #[error(
         "RDP is disabled for this browser; enable it with BrowserConfigBuilder::rdp(true) or rdp_port(..)"

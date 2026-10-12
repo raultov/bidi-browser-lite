@@ -1,14 +1,11 @@
 //! FKH: the fake Firefox helper behaves like the Firefox 157 observed in the
 //! spike, so the process and browser tests can rely on it.
 
-#[cfg(test)]
-mod support;
-
 use std::time::Duration;
 
+use crate::support::{eventually, free_port, free_ports, spawn_helper};
 use bidi_browser_lite::probe;
 use bidi_lite::browser::BrowserClient;
-use support::{eventually, free_port, spawn_helper};
 
 const HOST: &str = "127.0.0.1";
 const T: Duration = Duration::from_secs(10);
@@ -94,11 +91,10 @@ async fn handoff_and_port_in_use_exit_codes() {
 /// FKH-05: serve opens RDP only when --start-debugger-server is given.
 #[tokio::test]
 async fn rdp_only_when_asked() {
-    let (bidi, rdp) = (free_port(), free_port());
+    let [bidi, rdp, bidi2] = free_ports();
     let _plain = spawn_helper("serve", &[&format!("--remote-debugging-port={bidi}")], None);
     assert!(bidi_ready(bidi).await);
     assert!(!probe::is_port_open(HOST, rdp, PROBE).await);
-    let bidi2 = free_port();
     let _with = spawn_helper(
         "serve",
         &[
@@ -167,7 +163,7 @@ async fn ignore_sigterm_survives_sigterm() {
 /// FKH-09: rdp_silent accepts RDP connections but never greets.
 #[tokio::test]
 async fn rdp_silent_never_greets() {
-    let (bidi, rdp) = (free_port(), free_port());
+    let [bidi, rdp] = free_ports();
     let _child = spawn_helper(
         "rdp_silent",
         &[

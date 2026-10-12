@@ -16,7 +16,7 @@ use crate::error::ConfigError;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// How `Browser::ensure` obtains a browser.
+/// How [`Browser::ensure`](crate::browser::Browser::ensure) obtains a browser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LaunchMode {
     /// Attach to a Firefox already answering BiDi on the port, otherwise
@@ -129,7 +129,7 @@ pub(crate) struct Timeouts {
 
 /// Validated settings for one browser. Build it with
 /// [`BrowserConfig::builder`]; [`BrowserConfig::validate`] runs inside
-/// `Browser::ensure`.
+/// [`Browser::ensure`](crate::browser::Browser::ensure).
 #[derive(Clone)]
 pub struct BrowserConfig {
     pub(crate) mode: LaunchMode,

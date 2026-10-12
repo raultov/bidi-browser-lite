@@ -20,6 +20,12 @@ pub use rdp::MockRdp;
 
 use std::io;
 
+/// The captured `WebDriverBiDiServer.json`, for the profile tests.
+#[cfg(test)]
+pub(crate) fn fixtures_port_file() -> &'static str {
+    fixtures::PORT_FILE
+}
+
 /// A mock Firefox: a [`MockBidi`] plus an optional [`MockRdp`], the shape a
 /// downstream test attaches to with `LaunchMode::AttachOnly`.
 pub struct MockFirefox {

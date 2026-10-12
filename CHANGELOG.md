@@ -45,3 +45,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `hang_no_port`) that serves the mocks on the ports of its command line,
   locks the profile, writes `WebDriverBiDiServer.json` for port 0 and logs
   its argv to `FAKE_FIREFOX_ARGS_LOG`.
+- `profile` module: ephemeral profiles (under `$HOME/snap/firefox/common/`
+  for snap Firefox, the temp dir otherwise) removed on stop or drop, with an
+  orphan sweep on Unix; persistent and per-port profiles refused while a
+  running Firefox holds them; a managed `user.js` block that preserves the
+  user's own prefs; Firefox's `WebDriverBiDiServer.json` port file.
+- `process` module: Firefox spawned with null stdio, readiness of the BiDi
+  port (and the RDP port when enabled) checked with the side-effect free
+  probes, early exits classified by exit code, `FirefoxProcess::terminate`
+  (SIGTERM then kill on Unix, kill on Windows).
+- `browser` module: `Browser` with `ensure`/`ensure_with_allocator`
+  (`Auto`, `LaunchNew`, `AttachOnly`), one shared BiDi session behind
+  `client`, `browser_client` and the tab helpers, opt-in `rdp_client`,
+  `stop` (`browser.close` for managed browsers, `session.end` only for
+  attached ones), `restart`, `auto_relaunch`, recovery of a managed Firefox
+  stuck with an orphaned session, `SessionBusy` for attached ones,
+  `keep_alive_on_drop`, and accessors (`debug_address`, `rdp_address`,
+  `profile_dir`, `is_managed`, `is_alive`).
+- Crate-root re-exports of the `bidi-lite` types (`BidiClient`,
+  `BrowserClient`, `ContextInfo`, `ReadinessState`, `Tab`, `EventFilter`,
+  `WsCommand`, `WsResponse`, `NoParams`, `BidiError`, `BidiResult`,
+  `RdpClient`, `Debugger`) and of this crate's main types.
