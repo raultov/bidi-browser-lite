@@ -259,6 +259,20 @@ let rdp_client = browser.rdp_client().await?;
 let debugger = Debugger::attach_selected(&rdp_client).await?;
 assert!(!debugger.sources().is_empty());
 
+// Watch watcher resources, emit captured frames, and parse them:
+debugger.watch_resources(&["websocket"]).await?;
+let mut ws_stream = debugger.on_resource("websocket");
+let frame = bidi_browser_lite::parse_resources(
+    &bidi_browser_lite::bidi_lite::rdp::protocol::RdpPacket::parse(
+        bidi_browser_lite::test_support::fixtures::RDP_RESOURCES_WEBSOCKET,
+    )?,
+    "websocket",
+);
+firefox.rdp().unwrap().emit_resources("websocket", frame);
+let packet = futures_util::StreamExt::next(&mut ws_stream).await.unwrap()?;
+let received = bidi_browser_lite::parse_resources(&packet, "websocket");
+assert_eq!(received[0]["wsMessageType"], "webSocketOpened");
+
 browser.stop().await?;
 
 // The one-session rule, simulated:
@@ -277,8 +291,11 @@ session survives as an orphan, like Firefox), `release_session()`,
 
 `MockRdp` serves the full `bidi_lite::rdp::Debugger` lifecycle from captured
 Firefox 157 frames (tabs, watcher, breakpoint list, sources with long strings,
-stepping, frame evaluation, `pause()`, and `navigate()`) and records requests
-(`requests()`, `requests_to()`, `wait_for_request()`, `clear_requests()`).
+stepping, frame evaluation, `pause()`, and `navigate()`), honours `resourceTypes`
+in `watchResources`, emits arbitrary watcher resources (`emit_resources()`,
+`emit_resource_updates()`, `emit_packet()`), tracks watched types
+(`watched_resources()`), and records requests (`requests()`, `requests_to()`,
+`wait_for_request()`, `clear_requests()`).
 
 The `fake_firefox_helper` binary (same feature) stands in for Firefox in
 launch tests: point `firefox_path` at it and pick a behaviour with the

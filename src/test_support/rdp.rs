@@ -1,6 +1,6 @@
 //! `MockRdp`: a Firefox debugger server (RDP over WebSocket) stand-in.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -44,6 +44,7 @@ struct State {
     source_actor: String,
     long_string_actor: String,
     breakpoints: Vec<Value>,
+    watched_resources: HashSet<String>,
     current_line: u32,
     current_column: u32,
 }
@@ -106,6 +107,7 @@ impl MockRdp {
                 source_actor: "server1.conn1.watcher2.process7//source18".to_string(),
                 long_string_actor: "server1.conn0.longString2".to_string(),
                 breakpoints: Vec::new(),
+                watched_resources: HashSet::new(),
                 current_line: 7,
                 current_column: 10,
             }),
@@ -217,6 +219,53 @@ impl MockRdp {
             let _ = tx.send(available.clone());
             let _ = tx.send(sources.clone());
         }
+    }
+
+    /// Emits a `resources-available-array` packet of `resource_type` from the current target.
+    pub fn emit_resources(&self, resource_type: &str, resources: Vec<Value>) {
+        let state = self.shared.lock();
+        let packet = json!({
+            "type": "resources-available-array",
+            "from": state.target.actor,
+            "array": [ [ resource_type, resources ] ]
+        });
+        for tx in state.senders.values() {
+            let _ = tx.send(packet.clone());
+        }
+    }
+
+    /// Emits a `resources-updated-array` packet of `resource_type` from the current target.
+    pub fn emit_resource_updates(&self, resource_type: &str, updates: Vec<Value>) {
+        let state = self.shared.lock();
+        let packet = json!({
+            "type": "resources-updated-array",
+            "from": state.target.actor,
+            "array": [ [ resource_type, updates ] ]
+        });
+        for tx in state.senders.values() {
+            let _ = tx.send(packet.clone());
+        }
+    }
+
+    /// Emits an arbitrary packet to all connected clients.
+    pub fn emit_packet(&self, packet: Value) {
+        let state = self.shared.lock();
+        for tx in state.senders.values() {
+            let _ = tx.send(packet.clone());
+        }
+    }
+
+    /// All watcher resource types currently watched on the mock.
+    pub fn watched_resources(&self) -> Vec<String> {
+        let mut watched: Vec<_> = self
+            .shared
+            .lock()
+            .watched_resources
+            .iter()
+            .cloned()
+            .collect();
+        watched.sort();
+        watched
     }
 }
 
@@ -357,7 +406,7 @@ fn route_request(
         return (Some(answer_watcher(to, &state.watcher_actor)), Vec::new());
     }
     if to == state.watcher_actor {
-        return handle_watcher(state, to, kind);
+        return handle_watcher(state, to, kind, packet);
     }
     if to == state.breakpoint_list_actor {
         return handle_breakpoints(state, to, kind, packet);
@@ -406,7 +455,12 @@ fn answer_watcher(to: &str, watcher: &str) -> Value {
     reply
 }
 
-fn handle_watcher(state: &State, to: &str, kind: &str) -> (Option<Value>, Vec<Value>) {
+fn handle_watcher(
+    state: &mut State,
+    to: &str,
+    kind: &str,
+    packet: &Value,
+) -> (Option<Value>, Vec<Value>) {
     match kind {
         "getBreakpointListActor" => (
             Some(json!({ "from": to, "breakpointList": { "actor": state.breakpoint_list_actor } })),
@@ -416,22 +470,58 @@ fn handle_watcher(state: &State, to: &str, kind: &str) -> (Option<Value>, Vec<Va
             Some(json!({ "from": to, "configuration": { "actor": state.thread_config_actor } })),
             Vec::new(),
         ),
-        "watchTargets" => {
-            let mut notif = load(fx::RDP_TARGET_AVAILABLE);
-            notif["from"] = Value::from(to);
-            notif["target"]["actor"] = Value::from(state.target.actor.clone());
-            notif["target"]["threadActor"] = Value::from(state.target.thread_actor.clone());
-            notif["target"]["consoleActor"] = Value::from(state.target.console_actor.clone());
-            (Some(json!({ "from": to })), vec![notif])
+        "watchTargets" => (
+            Some(json!({ "from": to })),
+            vec![build_target_available(state, to)],
+        ),
+        "watchResources" => handle_watch_resources(state, to, packet),
+        "unwatchResources" => {
+            for t in extract_resource_types(packet) {
+                state.watched_resources.remove(&t);
+            }
+            (None, Vec::new())
         }
-        "watchResources" => {
-            let mut notif = load(fx::RDP_RESOURCES_SOURCES);
-            notif["from"] = Value::from(state.target.actor.clone());
-            (Some(json!({ "from": to })), vec![notif])
-        }
-        "unwatchTargets" | "unwatchResources" => (None, Vec::new()),
+        "unwatchTargets" => (None, Vec::new()),
         _ => (Some(json!({ "from": to })), Vec::new()),
     }
+}
+
+fn build_target_available(state: &State, to: &str) -> Value {
+    let mut notif = load(fx::RDP_TARGET_AVAILABLE);
+    notif["from"] = Value::from(to);
+    notif["target"]["actor"] = Value::from(state.target.actor.clone());
+    notif["target"]["threadActor"] = Value::from(state.target.thread_actor.clone());
+    notif["target"]["consoleActor"] = Value::from(state.target.console_actor.clone());
+    notif
+}
+
+fn handle_watch_resources(
+    state: &mut State,
+    to: &str,
+    packet: &Value,
+) -> (Option<Value>, Vec<Value>) {
+    let types = extract_resource_types(packet);
+    let mut notifs = Vec::new();
+    if types.iter().any(|t| t == "source") {
+        let mut notif = load(fx::RDP_RESOURCES_SOURCES);
+        notif["from"] = Value::from(state.target.actor.clone());
+        notifs.push(notif);
+    }
+    for t in types {
+        state.watched_resources.insert(t);
+    }
+    (Some(json!({ "from": to })), notifs)
+}
+
+fn extract_resource_types(packet: &Value) -> Vec<String> {
+    packet
+        .get("resourceTypes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect()
 }
 
 fn handle_breakpoints(
@@ -544,7 +634,7 @@ mod tests {
     use super::*;
     use bidi_lite::rdp::client::RdpClient;
     use bidi_lite::rdp::debugger::Debugger;
-    use bidi_lite::rdp::resources::{BreakpointLocation, parse_thread_states};
+    use bidi_lite::rdp::resources::{BreakpointLocation, parse_resources, parse_thread_states};
     use std::time::Duration;
 
     const T: Duration = Duration::from_secs(5);
@@ -775,5 +865,189 @@ mod tests {
         assert!(changed);
         assert_ne!(debugger.thread_actor(), old_thread);
         assert_ne!(debugger.thread_actor(), old_thread);
+    }
+
+    /// MCK-27: watchResources honours resourceTypes and does not send source if not requested.
+    #[tokio::test]
+    async fn watch_resources_honours_types() {
+        let mock = MockRdp::start().await.unwrap();
+        let client = RdpClient::connect(&format!("127.0.0.1:{}", mock.port()), T)
+            .await
+            .unwrap();
+        let debugger = Debugger::attach_selected(&client).await.unwrap();
+        let mut raw_resources = client.on_type("resources-available-array");
+
+        debugger
+            .watch_resources(&["websocket", "error-message"])
+            .await
+            .unwrap();
+
+        let next_notif =
+            tokio::time::timeout(Duration::from_millis(100), raw_resources.next()).await;
+        assert!(next_notif.is_err());
+
+        let watched = mock.watched_resources();
+        assert!(watched.contains(&"websocket".to_string()));
+        assert!(watched.contains(&"error-message".to_string()));
+    }
+
+    /// MCK-28: emit_resources pushes resources-available-array and parse_resources extracts them.
+    #[tokio::test]
+    async fn emit_resources_delivers_to_subscribers() {
+        let mock = MockRdp::start().await.unwrap();
+        let client = RdpClient::connect(&format!("127.0.0.1:{}", mock.port()), T)
+            .await
+            .unwrap();
+        let debugger = Debugger::attach_selected(&client).await.unwrap();
+        debugger.watch_resources(&["websocket"]).await.unwrap();
+        let mut ws_stream = debugger.on_resource("websocket");
+
+        let items = parse_resources(
+            &bidi_lite::rdp::protocol::RdpPacket::parse(fx::RDP_RESOURCES_WEBSOCKET).unwrap(),
+            "websocket",
+        );
+        assert!(!items.is_empty());
+
+        mock.emit_resources("websocket", items.clone());
+
+        let packet = tokio::time::timeout(Duration::from_secs(1), ws_stream.next())
+            .await
+            .expect("received emitted resource within timeout")
+            .unwrap()
+            .unwrap();
+        let parsed = parse_resources(&packet, "websocket");
+        assert_eq!(parsed.len(), items.len());
+        assert_eq!(parsed[0]["wsMessageType"], "webSocketOpened");
+    }
+
+    /// MCK-29: emit_resource_updates pushes resources-updated-array to subscribers.
+    #[tokio::test]
+    async fn emit_resource_updates_delivers_to_subscribers() {
+        let mock = MockRdp::start().await.unwrap();
+        let client = RdpClient::connect(&format!("127.0.0.1:{}", mock.port()), T)
+            .await
+            .unwrap();
+        let debugger = Debugger::attach_selected(&client).await.unwrap();
+        debugger.watch_resources(&["websocket"]).await.unwrap();
+        let mut updates_stream = client.on_type("resources-updated-array");
+
+        mock.emit_resource_updates(
+            "websocket",
+            vec![json!({ "httpChannelId": 38, "status": "updated" })],
+        );
+
+        let packet = tokio::time::timeout(Duration::from_secs(1), updates_stream.next())
+            .await
+            .expect("received update within timeout")
+            .unwrap()
+            .unwrap();
+        let parsed = parse_resources(&packet, "websocket");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0]["httpChannelId"], 38);
+    }
+
+    /// MCK-30: emit_packet broadcasts arbitrary packets to subscribers.
+    #[tokio::test]
+    async fn emit_packet_broadcasts_raw_packet() {
+        let mock = MockRdp::start().await.unwrap();
+        let client = RdpClient::connect(&format!("127.0.0.1:{}", mock.port()), T)
+            .await
+            .unwrap();
+        let mut custom_stream = client.on_type("custom-escape-hatch");
+
+        mock.emit_packet(json!({
+            "type": "custom-escape-hatch",
+            "from": "customActor1",
+            "payload": "custom-data"
+        }));
+
+        let packet = tokio::time::timeout(Duration::from_secs(1), custom_stream.next())
+            .await
+            .expect("received raw packet within timeout")
+            .unwrap()
+            .unwrap();
+        assert_eq!(packet.r#type.as_deref(), Some("custom-escape-hatch"));
+        assert_eq!(packet.from.as_deref(), Some("customActor1"));
+        assert_eq!(packet.body["payload"], "custom-data");
+    }
+
+    /// MCK-31: emit_resources after navigate uses the new target actor.
+    #[tokio::test]
+    async fn emit_resources_after_navigate_uses_new_target() {
+        let mock = MockRdp::start().await.unwrap();
+        let client = RdpClient::connect(&format!("127.0.0.1:{}", mock.port()), T)
+            .await
+            .unwrap();
+        let debugger = Debugger::attach_selected(&client).await.unwrap();
+        let old_thread = debugger.thread_actor();
+
+        mock.navigate();
+        assert!(crate::test_support_wait(|| debugger.thread_actor() != old_thread).await);
+
+        let mut notifs = client.on_type("resources-available-array");
+        mock.emit_resources(
+            "error-message",
+            vec![json!({ "pageError": { "errorMessage": "nav error" } })],
+        );
+
+        let packet = tokio::time::timeout(Duration::from_secs(1), notifs.next())
+            .await
+            .expect("received resource within timeout")
+            .unwrap()
+            .unwrap();
+        assert_ne!(
+            packet.from.as_deref(),
+            Some("server1.conn1.watcher2.process7//windowGlobalTarget2")
+        );
+        assert!(
+            packet
+                .from
+                .as_deref()
+                .unwrap()
+                .contains("windowGlobalTarget3")
+        );
+    }
+
+    /// MCK-32: Debugger attach_selected still bootstraps and lists sources.
+    #[tokio::test]
+    async fn attach_selected_still_lists_sources() {
+        let mock = MockRdp::start().await.unwrap();
+        let client = RdpClient::connect(&format!("127.0.0.1:{}", mock.port()), T)
+            .await
+            .unwrap();
+        let debugger = Debugger::attach_selected(&client).await.unwrap();
+        assert_eq!(debugger.sources().len(), 1);
+        assert_eq!(
+            debugger.sources()[0].url.as_deref(),
+            Some("https://example.com/test.html")
+        );
+    }
+
+    /// MCK-33: unwatch_resources records unwatch request with the specified types.
+    #[tokio::test]
+    async fn unwatch_resources_records_request() {
+        let mock = MockRdp::start().await.unwrap();
+        let client = RdpClient::connect(&format!("127.0.0.1:{}", mock.port()), T)
+            .await
+            .unwrap();
+        let debugger = Debugger::attach_selected(&client).await.unwrap();
+        debugger
+            .watch_resources(&["websocket", "css-message"])
+            .await
+            .unwrap();
+        assert!(mock.watched_resources().contains(&"websocket".to_string()));
+
+        debugger.unwatch_resources(&["websocket"]).unwrap();
+
+        let req = mock
+            .wait_for_request("unwatchResources", Duration::from_millis(500))
+            .await
+            .expect("unwatchResources was recorded");
+        assert_eq!(req.params["resourceTypes"], json!(["websocket"]));
+        assert!(!mock.watched_resources().contains(&"websocket".to_string()));
+        assert!(
+            mock.watched_resources()
+                .contains(&"css-message".to_string())
+        );
     }
 }

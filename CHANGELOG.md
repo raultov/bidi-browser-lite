@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `test-support`: real Firefox 157 RDP fixtures for `websocket`, `error-message`, and `css-message` watcher resources (`fixtures::RDP_RESOURCES_*`), plus a synthetic `platform-message` fixture.
+- `test-support`: `MockRdp` honours `resourceTypes` in `watchResources`, only sending initial sources when requested, and records watched types (`watched_resources()`).
+- `test-support`: `MockRdp::emit_resources()`, `MockRdp::emit_resource_updates()`, and `MockRdp::emit_packet()` allow emitting any watcher resource notification from the active target actor.
+- Re-exported `parse_resources` from `bidi_lite::rdp::resources` at crate root.
 - Dependencies: updated `bidi-lite` to 0.1.2 for watcher resource APIs.
 
 ## [0.1.3] - 2026-10-12

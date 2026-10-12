@@ -54,6 +54,7 @@ pub use bidi_lite::event_filter::EventFilter;
 pub use bidi_lite::protocol::{NoParams, WsCommand, WsResponse};
 pub use bidi_lite::rdp::client::RdpClient;
 pub use bidi_lite::rdp::debugger::Debugger;
+pub use bidi_lite::rdp::resources::parse_resources;
 pub use bidi_lite::tab::Tab;
 
 pub use browser::Browser;
