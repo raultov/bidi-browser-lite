@@ -18,5 +18,5 @@ pub mod ports;
 pub mod probe;
 pub mod process;
 pub mod profile;
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 pub mod test_support;

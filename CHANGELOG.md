@@ -31,3 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ports` module: `PortAllocator` (`reserve_near`, `reserve_pair` for a BiDi
   + RDP pair under one lock, `is_reserved`), `PortSearch`, `PairRequest`,
   `PortPair` and `PortReservation`, released synchronously on drop.
+- `test_support` module (feature `test-support`): `MockBidi` (behaviours
+  `Ready`, `SessionBusy`, `CloseOnSessionNew`, `SilentPeer`, `PlainHttp`; one
+  session that outlives its WebSocket, like Firefox), `MockRdp` (root
+  greeting, `listTabs`, `getRoot`; or silent) and `MockFirefox`. Replies are
+  built from frames captured from Firefox 157.
