@@ -265,10 +265,15 @@ impl BrowserConfig {
     }
 
     fn check_profile(&self) -> Result<(), ConfigError> {
-        if self.launches() && self.profile == ProfileMode::UserDefault {
-            return Err(ConfigError::UserDefaultProfileUnsupported);
+        match &self.profile {
+            ProfileMode::UserDefault if self.launches() => {
+                Err(ConfigError::UserDefaultProfileUnsupported)
+            }
+            ProfileMode::PersistentPerPort { .. } if self.port == 0 => {
+                Err(ConfigError::PerPortProfileNeedsPort)
+            }
+            _ => Ok(()),
         }
-        Ok(())
     }
 
     fn check_rdp(&self) -> Result<(), ConfigError> {
@@ -830,6 +835,21 @@ mod tests {
         );
         assert_eq!(ProfileMode::Ephemeral.dir_for_port(9300), None);
         assert_eq!(ProfileMode::Persistent("/p".into()).dir_for_port(1), None);
+    }
+
+    /// CFG-22: PersistentPerPort needs a fixed BiDi port.
+    #[test]
+    fn per_port_profile_needs_port() {
+        let per_port = ProfileMode::PersistentPerPort {
+            root: "/r".into(),
+            prefix: "p".into(),
+        };
+        let config = launch_new().profile(per_port.clone()).build();
+        assert_eq!(config.validate(), Err(ConfigError::PerPortProfileNeedsPort));
+        assert_eq!(
+            launch_new().port(9300).profile(per_port).build().validate(),
+            Ok(())
+        );
     }
 
     /// CFG-21: AttachOnly with RDP needs an explicit RDP port.

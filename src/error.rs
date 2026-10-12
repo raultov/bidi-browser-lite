@@ -170,6 +170,11 @@ pub enum ConfigError {
         /// The shared port.
         port: u16,
     },
+    /// A per-port profile is named after the BiDi port, so it needs one.
+    #[error(
+        "ProfileMode::PersistentPerPort needs a fixed BiDi port (its directory is named after it)"
+    )]
+    PerPortProfileNeedsPort,
     /// An attached Firefox's RDP port cannot be discovered.
     #[error(
         "AttachOnly with RDP needs an explicit rdp_port: an attached Firefox's RDP port cannot be discovered"
@@ -394,6 +399,7 @@ mod tests {
             ConfigError::UserDefaultProfileUnsupported,
             ConfigError::PortClash { port: 1 },
             ConfigError::RdpPortRequired,
+            ConfigError::PerPortProfileNeedsPort,
             ConfigError::ProxyCredentialsUnsupported,
             ConfigError::InvalidProxy { reason: "r" },
             ConfigError::InvalidWindowSize,
