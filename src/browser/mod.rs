@@ -92,7 +92,7 @@ impl Browser {
     /// The browser-level client over the same session as [`Browser::client`].
     pub async fn browser_client(&self) -> Result<BrowserClient, BrowserError> {
         let mut state = self.live_state().await?;
-        if let Some(session) = state.live_session() {
+        if let Some(session) = state.live_session(self.config.timeouts.connect).await {
             return Ok(session);
         }
         self.reopen_session(&mut state).await
@@ -256,7 +256,7 @@ impl Browser {
                     "managed Firefox holds an orphaned BiDi session; restarting it"
                 );
                 self.relaunch(state).await?;
-                state.live_session().ok_or(BrowserError::Stopped)
+                state.session.clone().ok_or(BrowserError::Stopped)
             }
             (false, false) => Err(BrowserError::SessionBusy {
                 host: host.to_owned(),

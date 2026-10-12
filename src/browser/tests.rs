@@ -322,3 +322,22 @@ async fn test_from_state_opens_session_lazily() {
     browser.list_tabs().await.unwrap();
     assert_eq!(mock.count("session.new"), 1);
 }
+
+/// BRW-36: A session that no longer answers is never handed out.
+#[tokio::test]
+async fn unresponsive_session_is_not_handed_out() {
+    // Given an attached browser whose Firefox stops answering
+    let mock = mock(MockBidiBehavior::Ready).await;
+    let config = attach_only(mock.port())
+        .connect_timeout(Duration::from_millis(300))
+        .build();
+    let browser = Browser::ensure(config).await.unwrap();
+    mock.stop_replying();
+    // When a client is requested
+    let result = browser.browser_client().await.map(drop);
+    // Then it fails instead of returning the dead session
+    assert!(
+        matches!(result, Err(BrowserError::RemoteUnavailable { .. })),
+        "{result:?}"
+    );
+}

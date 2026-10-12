@@ -42,6 +42,7 @@ enum Owner {
 /// The browser the mock pretends to be.
 struct State {
     behavior: MockBidiBehavior,
+    mute: bool,
     owner: Option<Owner>,
     closed: bool,
     counts: HashMap<String, usize>,
@@ -62,6 +63,7 @@ impl Shared {
 
 /// What to do after a command.
 enum Reply {
+    Silent,
     Send(Value),
     SendThenClose(Value),
     Close,
@@ -86,6 +88,7 @@ impl MockBidi {
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
                 behavior,
+                mute: false,
                 owner,
                 closed: false,
                 counts: HashMap::new(),
@@ -154,6 +157,12 @@ impl MockBidi {
         self.shared.lock().owner = None;
     }
 
+    /// Stops answering commands on every connection, old and new, without
+    /// closing anything (a hung or half-open peer).
+    pub fn stop_replying(&self) {
+        self.shared.lock().mute = true;
+    }
+
     /// Gives the session to a foreign client.
     pub fn occupy_session(&self) {
         self.shared.lock().owner = Some(Owner::Foreign);
@@ -191,6 +200,7 @@ async fn serve_ws(stream: TcpStream, conn: u64, shared: Arc<Shared>) {
         };
         let reply = handle(&shared, conn, &text);
         let (value, close) = match reply {
+            Reply::Silent => (None, false),
             Reply::Send(value) => (Some(value), false),
             Reply::SendThenClose(value) => (Some(value), true),
             Reply::Close => (None, true),
@@ -234,6 +244,9 @@ fn handle(shared: &Shared, conn: u64, text: &str) -> Reply {
     };
     let mut state = shared.lock();
     *state.counts.entry(cmd.method.clone()).or_default() += 1;
+    if state.mute {
+        return Reply::Silent;
+    }
     let owns = state.owner == Some(Owner::Connection(conn));
     match cmd.method.as_str() {
         "session.status" => Reply::Send(status(&state, cmd.id)),

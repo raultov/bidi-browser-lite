@@ -94,9 +94,16 @@ impl BrowserState {
         self.keep_alive_on_drop = keep_alive_on_drop;
     }
 
-    /// The session, if its connection is still alive.
-    pub(crate) fn live_session(&self) -> Option<BrowserClient> {
-        self.session.clone().filter(|s| s.client().is_connected())
+    /// The session, if its connection still answers. `is_connected` alone is
+    /// not enough: a connection whose tasks died without a close frame (a
+    /// dropped runtime, a half-open socket) still reports connected, so a
+    /// side-effect free `session.status` is sent, bounded by `limit`.
+    pub(crate) async fn live_session(&self, limit: Duration) -> Option<BrowserClient> {
+        let session = self.session.clone().filter(|s| s.client().is_connected())?;
+        match tokio::time::timeout(limit, session.client().status()).await {
+            Ok(Ok(_)) => Some(session),
+            _ => None,
+        }
     }
 
     /// Whether a managed process is still running.

@@ -71,5 +71,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BrowserClient`, `ContextInfo`, `ReadinessState`, `Tab`, `EventFilter`,
   `WsCommand`, `WsResponse`, `NoParams`, `BidiError`, `BidiResult`,
   `RdpClient`, `Debugger`) and of this crate's main types.
+- `Browser::browser_client` (and everything built on it) checks the cached
+  session with a side-effect free `session.status` before handing it out:
+  a connection whose tasks died without a close frame still reports
+  connected. `MockBidi::stop_replying` simulates such a peer.
+- Examples `simple`, `attach`, `pool`, `debugger` (RDP: pause on an uncaught
+  exception, read a variable in the paused frame) and `persistent_profile`;
+  `tests/run_all_e2e.sh` (`make e2e`), `tests/firefox.sh` and the
+  `#[ignore]`d real-Firefox tests (`make test-real-firefox`).
 - `ConfigError::PerPortProfileNeedsPort`: `PersistentPerPort` needs a fixed
   BiDi port.
