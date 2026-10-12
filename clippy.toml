@@ -48,3 +48,10 @@ allow-panic-in-tests = true
 #   type_complexity: 150 -> 0 | 100 -> 1
 # Thresholds left as they are until the final measurement (as bidi-lite did):
 # browser.rs and process.rs, the code that will stress them, do not exist yet.
+# Phases 6-9 (2026-10-12; profile, launcher, process, browser, pool; 147 unit + 40 integration tests):
+#   too_many_lines: 50 -> 0 | 40 -> 0 | 30 -> 4
+#   cognitive_complexity: 12 -> 0 | 10 -> 1 | 8 -> 2
+#   too_many_arguments: 4 -> 0 | 3 -> 4
+#   excessive_nesting: 5 -> 0 | 4 -> 0 | 3 -> 0
+#   type_complexity: 150 -> 0 | 100 -> 1
+# Ratchet decided at the final measurement (phase 11).
