@@ -99,6 +99,7 @@ pub fn helper_pid(scratch: &tempfile::TempDir) -> u32 {
 }
 
 /// The `--profile` directory the helper was launched with.
+#[cfg(unix)]
 pub fn helper_profile(scratch: &tempfile::TempDir) -> PathBuf {
     let log = std::fs::read_to_string(scratch.path().join("args")).unwrap();
     let args: Vec<&str> = log.lines().last().unwrap().split('\0').collect();

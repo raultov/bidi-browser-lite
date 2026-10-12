@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Windows: the crate failed to build with `-D warnings` because the profile
+  lock code used only on Unix was dead code there. Lock classification is
+  now one platform-neutral function; only reading the lock and checking a
+  PID differ per OS.
+
+### Changed
+- Windows: the orphaned ephemeral-profile sweep now runs too. It removes only
+  directories with no `parent.lock` (a lock's owner cannot be checked there,
+  so a locked profile is never deleted).
+
 ## [0.1.0] - 2026-10-12
 
 ### Added

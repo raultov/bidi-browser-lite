@@ -340,26 +340,57 @@ fn parse_lock_target(target: &str) -> Option<u32> {
     (pid != 0).then_some(pid)
 }
 
-/// Who holds `dir`, from its `lock` symlink (Unix).
-#[cfg(unix)]
+/// A profile lock as found on disk, before deciding who holds it. A struct
+/// rather than an enum so that every platform builds every shape: Windows
+/// locks never name their owner.
+#[derive(Debug)]
+struct RawLock {
+    /// Whether a lock file exists.
+    present: bool,
+    /// The owner it names, e.g. the Unix `lock` symlink target `IP:+PID`.
+    owner: Option<String>,
+}
+
+/// Who holds `dir`. Only reading the lock and checking a PID differ per OS;
+/// the decision itself is [`classify_lock`], shared by every platform.
 pub(crate) fn lock_state(dir: &Path) -> LockState {
-    let Ok(target) = std::fs::read_link(dir.join("lock")) else {
+    classify_lock(read_lock(dir), pid_alive)
+}
+
+/// Turns a raw lock into a [`LockState`]: a lock whose owner cannot be told
+/// is `Unknown`, which is never deleted.
+fn classify_lock(lock: RawLock, alive: impl Fn(u32) -> bool) -> LockState {
+    if !lock.present {
         return LockState::Free;
-    };
-    match parse_lock_target(&target.to_string_lossy()) {
-        Some(pid) if pid_alive(pid) => LockState::Live(pid),
+    }
+    match lock.owner.as_deref().and_then(parse_lock_target) {
+        Some(pid) if alive(pid) => LockState::Live(pid),
         Some(pid) => LockState::Stale(pid),
         None => LockState::Unknown,
     }
 }
 
-/// Who holds `dir`: on Windows liveness is not checked, so a `parent.lock`
-/// means "unknown", which is never deleted.
+/// Firefox's `lock` symlink, whose target is `IP:+PID`.
+#[cfg(unix)]
+fn read_lock(dir: &Path) -> RawLock {
+    match std::fs::read_link(dir.join("lock")) {
+        Ok(target) => RawLock {
+            present: true,
+            owner: Some(target.to_string_lossy().into_owned()),
+        },
+        Err(_) => RawLock {
+            present: false,
+            owner: None,
+        },
+    }
+}
+
+/// Firefox's `parent.lock`, which does not name its owner.
 #[cfg(not(unix))]
-pub(crate) fn lock_state(dir: &Path) -> LockState {
-    match dir.join("parent.lock").exists() {
-        true => LockState::Unknown,
-        false => LockState::Free,
+fn read_lock(dir: &Path) -> RawLock {
+    RawLock {
+        present: dir.join("parent.lock").exists(),
+        owner: None,
     }
 }
 
@@ -375,6 +406,13 @@ pub(crate) fn pid_alive(pid: u32) -> bool {
     matches!(kill(Pid::from_raw(raw), None), Ok(()) | Err(Errno::EPERM))
 }
 
+/// Without a portable liveness check, every PID counts as running, so
+/// nothing is ever deleted on a guess. Windows locks carry no PID anyway.
+#[cfg(not(unix))]
+pub(crate) fn pid_alive(_pid: u32) -> bool {
+    true
+}
+
 /// Whether an ephemeral directory may be swept: never while its Firefox may
 /// still run.
 fn sweepable(name: &str, age: Duration, max_age: Duration, lock: LockState) -> bool {
@@ -383,9 +421,9 @@ fn sweepable(name: &str, age: Duration, max_age: Duration, lock: LockState) -> b
         && matches!(lock, LockState::Free | LockState::Stale(_))
 }
 
-/// Deletes orphaned ephemeral profiles under `root` (Unix only: liveness of
-/// the owning Firefox cannot be checked portably). Errors are ignored.
-#[cfg(unix)]
+/// Deletes orphaned ephemeral profiles under `root`. Errors are ignored.
+/// On Windows a `parent.lock` is `Unknown`, so only lock-free directories
+/// are ever removed there.
 fn sweep_orphans(root: &Path, max_age: Duration) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
@@ -407,9 +445,6 @@ fn sweep_orphans(root: &Path, max_age: Duration) {
         }
     }
 }
-
-#[cfg(not(unix))]
-fn sweep_orphans(_root: &Path, _max_age: Duration) {}
 
 #[cfg(test)]
 mod tests {
@@ -640,6 +675,51 @@ mod tests {
             LockState::Stale(1)
         ));
         assert!(sweepable(&name, old, EPHEMERAL_SWEEP_AGE, LockState::Free));
+    }
+
+    /// PRF-20: Lock classification is the same pure function on every OS.
+    #[test]
+    fn lock_classification_is_platform_neutral() {
+        // Given a liveness check that knows only PID 7 is running
+        let alive = |pid: u32| pid == 7;
+        // Then no lock is Free, an unreadable lock is Unknown,
+        // and a PID-carrying lock is Live or Stale
+        let absent = RawLock {
+            present: false,
+            owner: None,
+        };
+        assert_eq!(classify_lock(absent, alive), LockState::Free);
+        let opaque = RawLock {
+            present: true,
+            owner: None,
+        };
+        assert_eq!(classify_lock(opaque, alive), LockState::Unknown);
+        let target = |s: &str| RawLock {
+            present: true,
+            owner: Some(s.to_string()),
+        };
+        assert_eq!(classify_lock(target("h:+7"), alive), LockState::Live(7));
+        assert_eq!(classify_lock(target("h:+8"), alive), LockState::Stale(8));
+        assert_eq!(classify_lock(target("garbage"), alive), LockState::Unknown);
+    }
+
+    /// PRF-21: On Windows a parent.lock is Unknown and an old locked dir survives the sweep.
+    #[cfg(not(unix))]
+    #[test]
+    fn windows_parent_lock_is_unknown_and_kept() {
+        // Given an old-enough ephemeral dir holding a parent.lock, and one without
+        let root = tempfile::tempdir().unwrap();
+        let locked = root.path().join(format!("{EPHEMERAL_PREFIX}locked"));
+        let free = root.path().join(format!("{EPHEMERAL_PREFIX}free"));
+        std::fs::create_dir_all(&locked).unwrap();
+        std::fs::create_dir_all(&free).unwrap();
+        std::fs::write(locked.join("parent.lock"), b"").unwrap();
+        assert_eq!(lock_state(&locked), LockState::Unknown);
+        // When the sweep runs with a zero age limit
+        sweep_orphans(root.path(), Duration::ZERO);
+        // Then only the lock-free dir is removed
+        assert!(locked.exists(), "an unknown owner is never deleted");
+        assert!(!free.exists(), "a lock-free orphan is swept");
     }
 
     /// PRF-14: The sweep deletes only old, prefixed, unlocked directories.

@@ -4,6 +4,11 @@
 
 #[cfg(test)]
 mod browser_lifecycle;
+// Two attributes, not cfg(all(..)): clippy only treats a plain cfg(test)
+// module as test code.
+#[cfg(test)]
+#[cfg(unix)]
+mod browser_lifecycle_unix;
 #[cfg(test)]
 mod fake_helper;
 #[cfg(test)]

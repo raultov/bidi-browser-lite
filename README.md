@@ -320,8 +320,9 @@ launch tests: point `firefox_path` at it and pick a behaviour with the
 - **Proxy:** the prefs were verified against a local listener (HTTP `GET`,
   HTTPS `CONNECT`, SOCKS5 greeting); a real proxy server is untested.
 - **Windows:** no SIGTERM (a stop that cannot use `browser.close` kills the
-  process); the orphaned-profile sweep is disabled; lock liveness is not
-  checked (a `parent.lock` is never deleted).
+  process); lock liveness is not checked, so a profile holding a
+  `parent.lock` is never deleted and the orphaned-profile sweep only removes
+  ephemeral profiles without one.
 - Flatpak Firefox is not supported. Chrome over BiDi is not supported in 0.1.
 - Pairing a BiDi tab with an RDP tab descriptor is left to the caller (by
   URL or selected tab).

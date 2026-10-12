@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use crate::support::{free_port, helper_config, helper_pid};
+use crate::support::{free_port, helper_config};
 use bidi_browser_lite::{BrowserError, EarlyExitReason, probe};
 
 const HOST: &str = "127.0.0.1";
@@ -148,17 +148,4 @@ async fn env_vars_and_args_reach_child() {
         );
     }
     browser.stop().await.unwrap();
-}
-
-/// PRC-15: A StartupTimeout leaves no child process behind.
-#[cfg(unix)]
-#[tokio::test]
-async fn startup_timeout_leaves_no_process() {
-    let (builder, scratch) = helper_config("hang_no_port");
-    let config = builder
-        .port(free_port())
-        .startup_timeout(Duration::from_millis(800))
-        .build();
-    assert!(crate::support::ensure(config).await.is_err());
-    assert!(crate::support::wait_gone(helper_pid(&scratch)).await);
 }
