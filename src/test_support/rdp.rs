@@ -33,6 +33,11 @@ impl MockRdp {
         Self::start_with(0, false).await
     }
 
+    /// Like [`MockRdp::start_silent`] on `127.0.0.1:port` (0 = any free port).
+    pub async fn start_silent_on(port: u16) -> io::Result<Self> {
+        Self::start_with(port, false).await
+    }
+
     async fn start_with(port: u16, greet: bool) -> io::Result<Self> {
         let server = Server::start(port, move |stream, _| serve(stream, greet)).await?;
         Ok(Self { server })

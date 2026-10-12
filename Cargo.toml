@@ -17,6 +17,17 @@ exclude = [".gitignore", "examples/*", "docs/*", "tests/*", "Makefile", "dupes.t
 # crate's tests and for downstream crates that test without a real Firefox.
 test-support = ["dep:tokio-tungstenite", "dep:futures-util"]
 
+# Test double standing in for Firefox: serves the BiDi/RDP mocks on the ports
+# given on its command line. Driven by FAKE_FIREFOX_MODE.
+[[bin]]
+name = "fake_firefox_helper"
+path = "src/bin/fake_firefox_helper.rs"
+required-features = ["test-support"]
+
+[[test]]
+name = "fake_helper"
+required-features = ["test-support"]
+
 [lints.rust]
 # No-unsafe policy (AGENTS.md). `deny` rather than `forbid`: an audited
 # exception would need `#[expect(unsafe_code, reason = "...")]`.
@@ -44,7 +55,7 @@ fn_params_excessive_bools = "warn"
 
 [dependencies]
 bidi-lite = "0.1.1"
-tokio = { version = "1.53.2", features = ["process", "net", "time", "fs", "io-util", "sync", "macros", "rt-multi-thread"] }
+tokio = { version = "1.53.2", features = ["process", "net", "time", "fs", "io-util", "sync", "macros", "rt-multi-thread", "signal"] }
 thiserror = "2.0.21"
 tracing = "0.1.44"
 serde = { version = "1.0.229", features = ["derive"] }

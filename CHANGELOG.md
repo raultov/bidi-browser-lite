@@ -39,3 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `probe` module: `is_port_open`, `is_firefox_bidi`, `bidi_session_available`
   (WebSocket to `/session` + `session.status`, never `session.new`) and
   `is_firefox_rdp` (root actor greeting), each bounded by its timeout.
+- `fake_firefox_helper` binary (feature `test-support`): a Firefox stand-in
+  driven by `FAKE_FIREFOX_MODE` (`serve`, `serve_session_busy`, `rdp_silent`,
+  `ignore_sigterm`, `handoff`, `port_in_use`, `exit_immediately`,
+  `hang_no_port`) that serves the mocks on the ports of its command line,
+  locks the profile, writes `WebDriverBiDiServer.json` for port 0 and logs
+  its argv to `FAKE_FIREFOX_ARGS_LOG`.
