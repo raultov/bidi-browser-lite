@@ -5,8 +5,8 @@
 use std::time::Duration;
 
 use bidi_browser_lite::{
-    Browser, BrowserConfig, BrowserConfigBuilder, BrowserError, LaunchMode, ReadinessState,
-    discovery, probe,
+    Browser, BrowserConfig, BrowserConfigBuilder, BrowserError, LaunchMode, ProfileError,
+    ProfileMode, ReadinessState, discovery, probe,
 };
 use serde_json::json;
 
@@ -18,6 +18,21 @@ fn launch() -> BrowserConfigBuilder {
         .mode(LaunchMode::LaunchNew)
         .headless(headless)
         .startup_timeout(Duration::from_secs(30))
+}
+
+/// A scratch directory Firefox can see: snap Firefox cannot see the host
+/// `/tmp`, so it goes under `~/snap/firefox/common` when that exists.
+fn profile_parent() -> std::io::Result<tempfile::TempDir> {
+    let snap = std::env::var_os("HOME")
+        .map(|home| std::path::PathBuf::from(home).join("snap/firefox/common/bidi-browser-lite"))
+        .filter(|dir| dir.parent().is_some_and(std::path::Path::is_dir));
+    match snap {
+        Some(dir) => {
+            std::fs::create_dir_all(&dir)?;
+            tempfile::tempdir_in(dir)
+        }
+        None => tempfile::tempdir(),
+    }
 }
 
 /// RFX-01: discover_default finds the installed Firefox.
@@ -121,4 +136,32 @@ async fn restart_yields_working_session() {
     assert_ne!(browser.pid().await, before);
     browser.new_tab("about:blank").await.unwrap();
     browser.stop().await.unwrap();
+}
+
+/// RFX-07: A persistent profile in use by a running Firefox is refused before launching.
+#[tokio::test]
+#[ignore = "requires a real Firefox"]
+async fn profile_in_use_is_refused() {
+    // Given a Firefox running on a persistent profile
+    let dir = profile_parent().unwrap();
+    let profile = || ProfileMode::Persistent(dir.path().to_path_buf());
+    let first = Browser::ensure(launch().profile(profile()).build())
+        .await
+        .unwrap();
+    // When a second launch targets the same profile
+    let second = Browser::ensure(launch().profile(profile()).build()).await;
+    // Then it is refused instead of being handed to the running Firefox
+    assert!(
+        matches!(
+            second,
+            Err(BrowserError::Profile(ProfileError::Locked { .. }))
+        ),
+        "{second:?}"
+    );
+    first.stop().await.unwrap();
+    // And once that Firefox is gone the profile can be launched again
+    let again = Browser::ensure(launch().profile(profile()).build())
+        .await
+        .unwrap();
+    again.stop().await.unwrap();
 }
