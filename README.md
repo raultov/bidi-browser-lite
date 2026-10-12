@@ -197,11 +197,13 @@ The library writes its prefs in a **managed block** of `user.js`
 (`// BEGIN bidi-browser-lite` … `// END bidi-browser-lite`), rewritten on
 every launch; anything you put outside the block is preserved. Your own
 `pref(..)` values come last, so they win. Prefs that leave the block are
-also removed from `prefs.js`, where Firefox keeps a copy. On Unix a
-persistent profile held by a running Firefox is refused
-(`ProfileError::Locked`): a second Firefox on it would silently hand the
-launch over to the running one. On Windows the lock's owner is not checked,
-so that case surfaces as `EarlyExit { reason: ProfileInUse }` instead.
+also removed from `prefs.js`, where Firefox keeps a copy. A persistent
+profile held by a running Firefox is refused (`ProfileError::Locked`): a
+second Firefox on it would silently hand the launch over to the running one.
+The holder is read from Firefox's `lock` symlink (`IP:+PID`) on Linux and
+from whether `parent.lock` is held open on Windows. On macOS Firefox may
+only use an fcntl lock on `.parentlock`, which is not checked: there the
+case surfaces as `EarlyExit { reason: ProfileInUse }` (untested).
 
 ## Coming from cdp-browser-lite
 
@@ -314,15 +316,21 @@ launch tests: point `firefox_path` at it and pick a behaviour with the
   a row and the `#[ignore]`d tests, visible windows), and the Debian
   `firefox-esr` 153 and Mozilla 157 builds headless in Docker during the
   design spike (BiDi only). No minimum version is claimed.
-- **macOS and Windows: unit and integration tests run in CI (with the fake
-  helper); a real Firefox is untested there.** Discovery paths for them come
-  from Mozilla's install layout and are untested against real installs.
+- **Windows:** the `#[ignore]`d real-Firefox tests run headless in CI
+  (`windows-latest`, Firefox installed by `setup-firefox`), followed by a
+  check that no `firefox` process is left. The examples and visible windows
+  are untested there.
+- **macOS: unit and integration tests run in CI (with the fake helper); a
+  real Firefox is untested.** Its discovery paths come from Mozilla's
+  install layout.
 - **Proxy:** the prefs were verified against a local listener (HTTP `GET`,
   HTTPS `CONNECT`, SOCKS5 greeting); a real proxy server is untested.
-- **Windows:** no SIGTERM (a stop that cannot use `browser.close` kills the
-  process); lock liveness is not checked, so a profile holding a
-  `parent.lock` is never deleted and the orphaned-profile sweep only removes
-  ephemeral profiles without one.
+- **Windows:** there is no SIGTERM, so a stop that cannot use
+  `browser.close` kills the process. Firefox runs in a Job Object, so that
+  kill (and a drop) takes down every process it started; processes created
+  in the instant between the spawn and the job assignment would escape it.
+  `--wait-for-browser` is passed so the spawned process is the browser, not
+  Firefox's short-lived launcher.
 - Flatpak Firefox is not supported. Chrome over BiDi is not supported in 0.1.
 - Pairing a BiDi tab with an RDP tab descriptor is left to the caller (by
   URL or selected tab).
@@ -330,8 +338,6 @@ launch tests: point `firefox_path` at it and pick a behaviour with the
   an `auto_relaunch` with a Firefox-picked BiDi port or an allocated RDP
   port, ask the `Browser` (`debug_address`, `rdp_address`) for the current
   ports.
-- Windows: `--wait-for-browser` is passed so the spawned process is the
-  browser, not Firefox's short-lived launcher; untested on a real Windows.
 
 ## Development
 
