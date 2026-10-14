@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-10-14
+
 ### Added
 - `test-support`: `MockRdp` answers the parent-process lookup behind `bidi-lite`'s `RdpClient::tab_for_context` / `Debugger::attach_to_context` (`getProcess`, `getTarget`, the `NavigableManager` evaluation): `map_context()` maps a BiDi context to a `browserId` (unmapped contexts answer `null`), `fail_parent_console_once()` makes the parent console answer `noSuchActor` once.
 - `test-support`: `MockRdp::set_tabs()` replaces the `listTabs` descriptors; `MockRdp::add_source()` declares sources sharing a URL with their breakpoint positions per line (several inline `<script>` blocks); `MockRdp::emit_before_reply()` sends a packet right before the reply to a request type.
