@@ -47,6 +47,53 @@ struct State {
     watched_resources: HashSet<String>,
     current_line: u32,
     current_column: u32,
+    tabs: Vec<Value>,
+    process_descriptor_actor: String,
+    parent_console_actor: String,
+    context_browser_ids: HashMap<String, u64>,
+    parent_console_failures: usize,
+    added_sources: Vec<Value>,
+    source_positions: HashMap<String, Value>,
+    before_reply: HashMap<String, Vec<Value>>,
+}
+
+impl State {
+    fn new() -> Self {
+        Self {
+            requests: Vec::new(),
+            senders: HashMap::new(),
+            target: TargetState {
+                actor: "server1.conn1.watcher2.process7//windowGlobalTarget2".to_string(),
+                thread_actor: "server1.conn1.watcher2.process7//thread1".to_string(),
+                console_actor: "server1.conn1.watcher2.process7//consoleActor3".to_string(),
+            },
+            target_generation: 2,
+            watcher_actor: "server1.conn1.watcher3".to_string(),
+            breakpoint_list_actor: "server1.conn1.breakpoint-list4".to_string(),
+            thread_config_actor: "server1.conn1.thread-configuration5".to_string(),
+            tab_descriptor_actor: "server1.conn1.tabDescriptor1".to_string(),
+            source_actor: "server1.conn1.watcher2.process7//source18".to_string(),
+            long_string_actor: "server1.conn0.longString2".to_string(),
+            breakpoints: Vec::new(),
+            watched_resources: HashSet::new(),
+            current_line: 7,
+            current_column: 10,
+            tabs: tabs_of(fx::RDP_LIST_TABS),
+            process_descriptor_actor: string_at(
+                fx::RDP_GET_PROCESS,
+                &["processDescriptor", "actor"],
+            ),
+            parent_console_actor: string_at(
+                fx::RDP_PARENT_PROCESS_TARGET,
+                &["process", "consoleActor"],
+            ),
+            context_browser_ids: HashMap::new(),
+            parent_console_failures: 0,
+            added_sources: Vec::new(),
+            source_positions: HashMap::new(),
+            before_reply: HashMap::new(),
+        }
+    }
 }
 
 struct Shared {
@@ -91,26 +138,7 @@ impl MockRdp {
 
     async fn start_with(port: u16, greet: bool) -> io::Result<Self> {
         let shared = Arc::new(Shared {
-            state: Mutex::new(State {
-                requests: Vec::new(),
-                senders: HashMap::new(),
-                target: TargetState {
-                    actor: "server1.conn1.watcher2.process7//windowGlobalTarget2".to_string(),
-                    thread_actor: "server1.conn1.watcher2.process7//thread1".to_string(),
-                    console_actor: "server1.conn1.watcher2.process7//consoleActor3".to_string(),
-                },
-                target_generation: 2,
-                watcher_actor: "server1.conn1.watcher3".to_string(),
-                breakpoint_list_actor: "server1.conn1.breakpoint-list4".to_string(),
-                thread_config_actor: "server1.conn1.thread-configuration5".to_string(),
-                tab_descriptor_actor: "server1.conn1.tabDescriptor1".to_string(),
-                source_actor: "server1.conn1.watcher2.process7//source18".to_string(),
-                long_string_actor: "server1.conn0.longString2".to_string(),
-                breakpoints: Vec::new(),
-                watched_resources: HashSet::new(),
-                current_line: 7,
-                current_column: 10,
-            }),
+            state: Mutex::new(State::new()),
             request_arrived: Notify::new(),
         });
         let serving = Arc::clone(&shared);
@@ -267,6 +295,90 @@ impl MockRdp {
         watched.sort();
         watched
     }
+
+    /// Replaces the tab descriptors `listTabs` answers with (by default the
+    /// one tab of the captured `listTabs`). Each descriptor answers
+    /// `getWatcher`; [`fixtures::RDP_LIST_TABS_TWO_TABS`](fx::RDP_LIST_TABS_TWO_TABS)
+    /// holds captured descriptors with distinct `browserId`s on the same URL.
+    pub fn set_tabs(&self, tabs: Vec<Value>) {
+        self.shared.lock().tabs = tabs;
+    }
+
+    /// Makes the parent-process lookup of the BiDi context `context` (what
+    /// `RdpClient::browser_id_of_context` evaluates) answer `browser_id`.
+    /// Unmapped contexts answer `null`, like a closed or unknown context.
+    pub fn map_context(&self, context: &str, browser_id: u64) {
+        self.shared
+            .lock()
+            .context_browser_ids
+            .insert(context.to_owned(), browser_id);
+    }
+
+    /// Makes the next evaluation on the parent-process console answer
+    /// `noSuchActor`, like a console that went away with its target.
+    pub fn fail_parent_console_once(&self) {
+        self.shared.lock().parent_console_failures += 1;
+    }
+
+    /// Adds a source with `url` whose `getBreakpointPositionsCompressed`
+    /// answers `positions` (`{"<line>": [columns]}`, `{}` for none),
+    /// restricted to the queried lines. Sources are announced after the
+    /// captured one, in the order they were added (one per inline
+    /// `<script>` of a page share its URL); a source added while `source`
+    /// resources are watched is announced at once. Returns its actor.
+    pub fn add_source(&self, url: &str, positions: Value) -> String {
+        let mut state = self.shared.lock();
+        let actor = format!(
+            "server1.conn1.watcher2.process7//source_added_{}",
+            state.added_sources.len() + 1
+        );
+        let mut resource = load(fx::RDP_RESOURCES_SOURCES)["array"][0][1][0].clone();
+        resource["actor"] = Value::from(actor.as_str());
+        resource["url"] = Value::from(url);
+        resource["sourceMapBaseURL"] = Value::from(url);
+        state.added_sources.push(resource.clone());
+        state.source_positions.insert(actor.clone(), positions);
+        if state.watched_resources.contains("source") {
+            let packet = json!({
+                "type": "resources-available-array",
+                "from": state.target.actor,
+                "array": [ [ "source", [ resource ] ] ]
+            });
+            for tx in state.senders.values() {
+                let _ = tx.send(packet.clone());
+            }
+        }
+        actor
+    }
+
+    /// Sends `packet` right before the reply to the next request of
+    /// `request_type`, e.g. a `forwardingCancelled` from `root` racing a
+    /// `listTabs` reply.
+    pub fn emit_before_reply(&self, request_type: &str, packet: Value) {
+        self.shared
+            .lock()
+            .before_reply
+            .entry(request_type.to_owned())
+            .or_default()
+            .push(packet);
+    }
+}
+
+/// The string at `path` in a fixture, empty if absent.
+fn string_at(fixture: &str, path: &[&str]) -> String {
+    path.iter()
+        .fold(&load(fixture), |value, key| &value[*key])
+        .as_str()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// The `tabs` array of a `listTabs` fixture.
+fn tabs_of(fixture: &str) -> Vec<Value> {
+    match load(fixture)["tabs"].take() {
+        Value::Array(tabs) => tabs,
+        _ => Vec::new(),
+    }
 }
 
 fn build_navigation_packets(state: &mut State) -> (Value, Value, Value) {
@@ -390,7 +502,14 @@ fn handle_message(shared: &Shared, text: &str) -> (Option<Value>, Vec<Value>) {
         params: packet.clone(),
     });
     shared.request_arrived.notify_waiters();
-    route_request(&mut state, &to, &kind, &packet)
+    let (reply, notifications) = route_request(&mut state, &to, &kind, &packet);
+    match state.before_reply.remove(&kind) {
+        Some(mut first) => {
+            first.extend(notifications);
+            (reply, first)
+        }
+        None => (reply, notifications),
+    }
 }
 
 fn route_request(
@@ -400,7 +519,13 @@ fn route_request(
     packet: &Value,
 ) -> (Option<Value>, Vec<Value>) {
     if to == "root" || to.is_empty() {
-        return handle_root(to, kind);
+        return (Some(handle_root(state, kind)), Vec::new());
+    }
+    if to == state.process_descriptor_actor {
+        return (Some(handle_process_descriptor(to, kind)), Vec::new());
+    }
+    if to == state.parent_console_actor {
+        return handle_parent_console(state, to, kind, packet);
     }
     if to == state.tab_descriptor_actor || kind == "getWatcher" {
         return (Some(answer_watcher(to, &state.watcher_actor)), Vec::new());
@@ -415,7 +540,7 @@ fn route_request(
         return (Some(json!({ "from": to })), Vec::new());
     }
     if to == state.source_actor || to.contains("source") {
-        return (Some(handle_source(to, kind, packet)), Vec::new());
+        return (Some(handle_source(state, to, kind, packet)), Vec::new());
     }
     if to == state.long_string_actor {
         return (
@@ -432,20 +557,77 @@ fn route_request(
     (Some(json!({ "from": to })), Vec::new())
 }
 
-fn handle_root(_to: &str, kind: &str) -> (Option<Value>, Vec<Value>) {
-    let reply = match kind {
-        "listTabs" => load(fx::RDP_LIST_TABS),
-        "getRoot" => load(fx::RDP_GET_ROOT),
-        "getTab" => json!({ "from": "root", "tab": load(fx::RDP_LIST_TABS)["tabs"][0].clone() }),
-        _ => {
-            let mut err = load(fx::RDP_UNRECOGNIZED);
-            err["message"] = Value::from(format!(
-                "Actor root does not recognize the packet type '{kind}'"
-            ));
-            err
+fn handle_root(state: &State, kind: &str) -> Value {
+    match kind {
+        "listTabs" => {
+            let mut reply = load(fx::RDP_LIST_TABS);
+            reply["tabs"] = Value::Array(state.tabs.clone());
+            reply
         }
-    };
-    (Some(reply), Vec::new())
+        "getRoot" => load(fx::RDP_GET_ROOT),
+        "getTab" => json!({ "from": "root", "tab": state.tabs.first().cloned() }),
+        "getProcess" => load(fx::RDP_GET_PROCESS),
+        _ => unrecognized("root", kind),
+    }
+}
+
+fn unrecognized(to: &str, kind: &str) -> Value {
+    let mut err = load(fx::RDP_UNRECOGNIZED);
+    err["from"] = Value::from(to);
+    err["message"] = Value::from(format!(
+        "Actor {to} does not recognize the packet type '{kind}'"
+    ));
+    err
+}
+
+fn handle_process_descriptor(to: &str, kind: &str) -> Value {
+    match kind {
+        "getTarget" => load(fx::RDP_PARENT_PROCESS_TARGET),
+        _ => unrecognized(to, kind),
+    }
+}
+
+/// The parent-process console: evaluations are the `NavigableManager`
+/// lookup, answered with the `browserId` mapped to the context id the text
+/// carries as a JSON string literal, or `null`.
+fn handle_parent_console(
+    state: &mut State,
+    to: &str,
+    kind: &str,
+    packet: &Value,
+) -> (Option<Value>, Vec<Value>) {
+    if kind != "evaluateJSAsync" {
+        return (Some(json!({ "from": to })), Vec::new());
+    }
+    if state.parent_console_failures > 0 {
+        state.parent_console_failures -= 1;
+        let gone = json!({
+            "from": to,
+            "error": "noSuchActor",
+            "message": format!("No such actor for ID: {to}"),
+        });
+        return (Some(gone), Vec::new());
+    }
+    let text = packet
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let browser_id = state
+        .context_browser_ids
+        .iter()
+        .find(|(context, _)| text.contains(&Value::from(context.as_str()).to_string()))
+        .map(|(_, id)| Value::from(*id));
+    let result_id = format!("lookup-{}", state.requests.len());
+    let mut reply = load(fx::RDP_EVALUATE_REPLY);
+    reply["from"] = Value::from(to);
+    reply["resultID"] = Value::from(result_id.as_str());
+    let mut result = load(fx::RDP_BROWSER_ID_LOOKUP);
+    result["from"] = Value::from(to);
+    result["resultID"] = Value::from(result_id);
+    result["input"] = Value::from(text);
+    result["result"] =
+        browser_id.unwrap_or_else(|| load(fx::RDP_BROWSER_ID_LOOKUP_NULL)["result"].clone());
+    (Some(reply), vec![result])
 }
 
 fn answer_watcher(to: &str, watcher: &str) -> Value {
@@ -505,6 +687,9 @@ fn handle_watch_resources(
     if types.iter().any(|t| t == "source") {
         let mut notif = load(fx::RDP_RESOURCES_SOURCES);
         notif["from"] = Value::from(state.target.actor.clone());
+        if let Some(sources) = notif["array"][0][1].as_array_mut() {
+            sources.extend(state.added_sources.iter().cloned());
+        }
         notifs.push(notif);
     }
     for t in types {
@@ -543,19 +728,27 @@ fn handle_breakpoints(
     }
 }
 
-fn handle_source(to: &str, kind: &str, packet: &Value) -> Value {
+fn handle_source(state: &State, to: &str, kind: &str, packet: &Value) -> Value {
     match kind {
         "getBreakpointPositionsCompressed" => {
-            let line = packet
-                .get("query")
-                .and_then(|q| q.get("start"))
-                .and_then(|s| s.get("line"))
-                .and_then(Value::as_u64)
-                .unwrap_or(7)
-                .to_string();
+            let start = packet["query"]["start"]["line"].as_u64().unwrap_or(7);
+            let end = packet["query"]["end"]["line"].as_u64().unwrap_or(start);
             let mut pos = load(fx::RDP_BREAKPOINT_POSITIONS);
             pos["from"] = Value::from(to);
-            pos["positions"] = json!({ line: [ 10 ] });
+            pos["positions"] = match state.source_positions.get(to) {
+                Some(Value::Object(lines)) => Value::Object(
+                    lines
+                        .iter()
+                        .filter(|(line, _)| {
+                            line.parse::<u64>()
+                                .is_ok_and(|line| line == start || (start..end).contains(&line))
+                        })
+                        .map(|(line, columns)| (line.clone(), columns.clone()))
+                        .collect(),
+                ),
+                Some(_) => json!({}),
+                None => json!({ start.to_string(): [ 10 ] }),
+            };
             pos
         }
         "source" if to == "server1.conn0.source1" => load(fx::RDP_SOURCE_LONG_STRING),
@@ -634,7 +827,9 @@ mod tests {
     use super::*;
     use bidi_lite::rdp::client::RdpClient;
     use bidi_lite::rdp::debugger::Debugger;
-    use bidi_lite::rdp::resources::{BreakpointLocation, parse_resources, parse_thread_states};
+    use bidi_lite::rdp::resources::{
+        Breakable, BreakpointLocation, parse_resources, parse_thread_states,
+    };
     use std::time::Duration;
 
     const T: Duration = Duration::from_secs(5);
@@ -1049,5 +1244,218 @@ mod tests {
             mock.watched_resources()
                 .contains(&"css-message".to_string())
         );
+    }
+
+    /// The URL of the two-tab capture, two inline `<script>` blocks.
+    const INLINE: &str = "http://127.0.0.1:44223/inline";
+
+    async fn connected(mock: &MockRdp) -> RdpClient {
+        RdpClient::connect(&format!("127.0.0.1:{}", mock.port()), T)
+            .await
+            .unwrap()
+    }
+
+    fn types_sent(mock: &MockRdp, request_type: &str) -> Vec<String> {
+        mock.requests()
+            .into_iter()
+            .filter(|r| r.request_type == request_type)
+            .map(|r| r.to)
+            .collect()
+    }
+
+    /// MCK-34: A mapped BiDi context is looked up in the parent process, whose console is found once.
+    #[tokio::test]
+    async fn mapped_context_is_looked_up_in_the_parent_process() {
+        // Given a mock mapping the context "ctx-1" to browserId 2
+        let mock = MockRdp::start().await.unwrap();
+        mock.map_context("ctx-1", 2);
+        let client = connected(&mock).await;
+
+        // When the context is looked up twice
+        let first = client.browser_id_of_context("ctx-1").await.unwrap();
+        let second = client.browser_id_of_context("ctx-1").await.unwrap();
+
+        // Then both answer 2, and the parent console was fetched only once
+        assert_eq!((first, second), (Some(2), Some(2)));
+        assert_eq!(types_sent(&mock, "getProcess"), ["root"]);
+        assert_eq!(
+            types_sent(&mock, "getTarget"),
+            ["server1.conn0.processDescriptor4"]
+        );
+        assert_eq!(
+            types_sent(&mock, "evaluateJSAsync"),
+            ["server1.conn0.consoleActor7"; 2]
+        );
+    }
+
+    /// MCK-35: An unmapped context has no tab, so attach_to_context fails with no such frame before getWatcher.
+    #[tokio::test]
+    async fn unmapped_context_has_no_tab() {
+        // Given a mock that maps no context
+        let mock = MockRdp::start().await.unwrap();
+        let client = connected(&mock).await;
+
+        // When the debugger of an unknown context is attached
+        let found = client.tab_for_context("ctx-9").await.unwrap();
+        let attached = Debugger::attach_to_context(&client, "ctx-9").await;
+
+        // Then no tab is found, the attach fails with no such frame, and no watcher is asked
+        assert!(found.is_none());
+        assert!(
+            matches!(&attached, Err(bidi_lite::error::BidiError::ProtocolError { error, .. }) if error == "no such frame"),
+            "{:?}",
+            attached.err()
+        );
+        assert!(types_sent(&mock, "getWatcher").is_empty());
+    }
+
+    /// MCK-36: Two tabs on the same URL: each context attaches to the descriptor with its browserId.
+    #[tokio::test]
+    async fn same_url_tabs_attach_by_browser_id() {
+        // Given the captured three tabs, the last two on the same URL, and their contexts mapped
+        let mock = MockRdp::start().await.unwrap();
+        mock.set_tabs(tabs_of(fx::RDP_LIST_TABS_TWO_TABS));
+        mock.map_context("ctx-a", 11);
+        mock.map_context("ctx-b", 12);
+        let client = connected(&mock).await;
+
+        // When each context's tab is looked up and its debugger attached
+        let tab_a = client.tab_for_context("ctx-a").await.unwrap().unwrap();
+        let tab_b = client.tab_for_context("ctx-b").await.unwrap().unwrap();
+        Debugger::attach_to_context(&client, "ctx-b").await.unwrap();
+        Debugger::attach_to_context(&client, "ctx-a").await.unwrap();
+
+        // Then each maps to its own descriptor, whatever the shared URL
+        assert_eq!((tab_a.url.as_str(), tab_b.url.as_str()), (INLINE, INLINE));
+        assert_eq!(
+            (tab_a.browsing_context_id, tab_b.browsing_context_id),
+            (Some(12), Some(13))
+        );
+        assert_eq!(
+            types_sent(&mock, "getWatcher"),
+            [
+                "server1.conn0.tabDescriptor3",
+                "server1.conn0.tabDescriptor2"
+            ]
+        );
+    }
+
+    /// MCK-37: A parent console answering noSuchActor once is fetched again and the lookup retried.
+    #[tokio::test]
+    async fn gone_parent_console_is_fetched_again() {
+        // Given a looked-up context, then a parent console that answers noSuchActor once
+        let mock = MockRdp::start().await.unwrap();
+        mock.map_context("ctx-1", 2);
+        let client = connected(&mock).await;
+        client.browser_id_of_context("ctx-1").await.unwrap();
+        mock.fail_parent_console_once();
+
+        // When the context is looked up again
+        let found = client.browser_id_of_context("ctx-1").await.unwrap();
+
+        // Then the lookup succeeds after fetching the parent process again
+        assert_eq!(found, Some(2));
+        assert_eq!(types_sent(&mock, "getProcess").len(), 2);
+        assert_eq!(types_sent(&mock, "evaluateJSAsync").len(), 3);
+    }
+
+    fn inline_page(mock: &MockRdp) -> (String, String) {
+        let positions = |fixture| load(fixture)["positions"].clone();
+        let first = mock.add_source(INLINE, positions(fx::RDP_BREAKPOINT_POSITIONS_INLINE_NONE));
+        let second = mock.add_source(
+            INLINE,
+            positions(fx::RDP_BREAKPOINT_POSITIONS_INLINE_SECOND),
+        );
+        (first, second)
+    }
+
+    /// MCK-38: A column-less breakpoint on a line only the second same-URL source covers binds there.
+    #[tokio::test]
+    async fn columnless_breakpoint_binds_in_the_second_source() {
+        // Given two sources of one page, only the second breakable on line 9 (column 2)
+        let mock = MockRdp::start().await.unwrap();
+        let (first, second) = inline_page(&mock);
+        let client = connected(&mock).await;
+        let debugger = Debugger::attach_selected(&client).await.unwrap();
+
+        // When a breakpoint is set on line 9 without a column
+        let location = BreakpointLocation {
+            source_url: INLINE.to_string(),
+            line: 9,
+            column: None,
+        };
+        let bound = debugger
+            .set_breakpoint_resolved(&location, None)
+            .await
+            .unwrap();
+
+        // Then both sources were asked, in order, and it binds at column 2
+        assert_eq!(
+            types_sent(&mock, "getBreakpointPositionsCompressed"),
+            [first, second]
+        );
+        assert_eq!((bound.location.column, bound.resolved), (Some(2), true));
+        let set = mock
+            .wait_for_request("setBreakpoint", T)
+            .await
+            .expect("setBreakpoint was recorded");
+        assert_eq!(set.params["location"]["column"], 2);
+    }
+
+    /// MCK-39: breakable_column tells a line no source covers from a URL no source has.
+    #[tokio::test]
+    async fn breakable_column_reports_nowhere_and_not_loaded() {
+        // Given two sources of one page, breakable only on line 9
+        let mock = MockRdp::start().await.unwrap();
+        inline_page(&mock);
+        let client = connected(&mock).await;
+        let debugger = Debugger::attach_selected(&client).await.unwrap();
+
+        // When lines 9 and 8 of the page and a line of an unknown URL are asked
+        let nine = debugger.breakable_column(INLINE, 9).await.unwrap();
+        let eight = debugger.breakable_column(INLINE, 8).await.unwrap();
+        let unknown = debugger
+            .breakable_column("https://example.com/none.js", 1)
+            .await
+            .unwrap();
+
+        // Then they are At(2), Nowhere and NotLoaded
+        assert_eq!(
+            (nine, eight, unknown),
+            (Breakable::At(2), Breakable::Nowhere, Breakable::NotLoaded)
+        );
+    }
+
+    /// MCK-40: A source added while sources are watched is announced at once.
+    #[tokio::test]
+    async fn source_added_while_watched_is_announced() {
+        // Given an attached debugger watching sources
+        let mock = MockRdp::start().await.unwrap();
+        let client = connected(&mock).await;
+        let debugger = Debugger::attach_selected(&client).await.unwrap();
+
+        // When a source is added
+        let actor = mock.add_source(INLINE, json!({ "9": [2] }));
+
+        // Then the debugger caches it
+        let announced =
+            crate::test_support_wait(|| debugger.sources().iter().any(|s| s.actor == actor)).await;
+        assert!(announced);
+    }
+
+    /// MCK-41: A forwardingCancelled from root before the listTabs reply is not taken as the reply.
+    #[tokio::test]
+    async fn forwarding_cancelled_before_list_tabs_is_skipped() {
+        // Given a forwardingCancelled queued before the next listTabs reply
+        let mock = MockRdp::start().await.unwrap();
+        let client = connected(&mock).await;
+        mock.emit_before_reply("listTabs", load(fx::RDP_FORWARDING_CANCELLED));
+
+        // When the tabs are listed
+        let tabs = client.list_tabs().await.unwrap();
+
+        // Then the real reply is returned
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(tabs[0].actor, "server1.conn1.tabDescriptor1");
     }
 }

@@ -1,9 +1,8 @@
 //! Launch Firefox with its debugger server (RDP, opt-in), pause on an
 //! uncaught exception, read a variable in the paused frame, resume.
 //!
-//! BiDi drives the page; RDP debugs it. BiDi context ids and RDP tab
-//! descriptors are unrelated, so the tab is brought to the front and the
-//! debugger attaches to the selected tab.
+//! BiDi drives the page; RDP debugs it. The debugger attaches to the tab
+//! showing the BiDi context, found by `browserId` without activating it.
 
 use std::time::Duration;
 
@@ -38,8 +37,8 @@ async fn run(browser: &Browser) -> Result<(), Box<dyn std::error::Error>> {
     let tab = browser.new_tab("about:blank").await?;
     tab.navigate("https://www.rust-lang.org", ReadinessState::Complete)
         .await?;
-    tab.activate().await?;
-    let debugger = Debugger::attach_selected(&browser.rdp_client().await?).await?;
+    let rdp = browser.rdp_client().await?;
+    let debugger = Debugger::attach_to_context(&rdp, tab.context_id()).await?;
     let result = pause_and_inspect(&tab, &debugger).await;
     // Detaching removes breakpoints and resumes: a paused page would freeze.
     debugger.detach().await?;

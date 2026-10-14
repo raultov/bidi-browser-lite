@@ -70,11 +70,11 @@ use bidi_browser_lite::{Browser, BrowserConfig, Debugger, LaunchMode};
 let config = BrowserConfig::builder().mode(LaunchMode::LaunchNew).rdp(true).build();
 let browser = Browser::ensure(config).await?;
 let tab = browser.new_tab("https://www.rust-lang.org").await?;
-tab.activate().await?;
 
-// BiDi context ids and RDP tab descriptors are unrelated: attach to the
-// selected tab (or by URL with `Debugger::attach_by_url`).
-let debugger = Debugger::attach_selected(&browser.rdp_client().await?).await?;
+// The debugger of the tab showing this BiDi context, found by `browserId`:
+// the tab is not activated and tabs on the same URL are told apart.
+let rdp = browser.rdp_client().await?;
+let debugger = Debugger::attach_to_context(&rdp, tab.context_id()).await?;
 // ... breakpoints, pause, frames, evaluation: see bidi-lite's Debugger ...
 debugger.detach().await?;
 browser.stop().await?;
@@ -247,16 +247,18 @@ let config = BrowserConfig::builder()
     .rdp_port(firefox.rdp_port().unwrap_or_default())
     .build();
 let browser = Browser::ensure(config).await?;
-browser.new_tab("https://example.com/").await?;
+let tab = browser.new_tab("https://example.com/").await?;
 assert_eq!(firefox.bidi().count("session.new"), 1);
 
 // Assert recorded command parameters:
 let created = firefox.bidi().commands_named("browsingContext.create");
 assert!(!created.is_empty());
 
-// Drive the RDP debugger against the mock in-process:
+// Drive the RDP debugger against the mock in-process. Map the tab's BiDi
+// context to the browserId of the mock's tab descriptor (2) first:
+firefox.rdp().unwrap().map_context(tab.context_id(), 2);
 let rdp_client = browser.rdp_client().await?;
-let debugger = Debugger::attach_selected(&rdp_client).await?;
+let debugger = Debugger::attach_to_context(&rdp_client, tab.context_id()).await?;
 assert!(!debugger.sources().is_empty());
 
 // Watch watcher resources, emit captured frames, and parse them:
@@ -295,7 +297,15 @@ stepping, frame evaluation, `pause()`, and `navigate()`), honours `resourceTypes
 in `watchResources`, emits arbitrary watcher resources (`emit_resources()`,
 `emit_resource_updates()`, `emit_packet()`), tracks watched types
 (`watched_resources()`), and records requests (`requests()`, `requests_to()`,
-`wait_for_request()`, `clear_requests()`).
+`wait_for_request()`, `clear_requests()`). For `Debugger::attach_to_context`
+it answers the parent-process lookup (`getProcess`, `getTarget`, the
+`NavigableManager` evaluation) with the `browserId` given to `map_context()`
+(`null` for unmapped contexts) and can lose its parent console once
+(`fail_parent_console_once()`); `set_tabs()` replaces the tab descriptors
+(`fixtures::RDP_LIST_TABS_TWO_TABS` has two on the same URL); `add_source()`
+declares extra sources with their breakpoint positions per line, as the
+inline `<script>` blocks of one page; `emit_before_reply()` sends a packet
+(e.g. `fixtures::RDP_FORWARDING_CANCELLED`) right before a reply.
 
 The `fake_firefox_helper` binary (same feature) stands in for Firefox in
 launch tests: point `firefox_path` at it and pick a behaviour with the

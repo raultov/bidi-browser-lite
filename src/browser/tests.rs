@@ -370,3 +370,44 @@ async fn cancelled_attach_ends_its_session() {
         crate::test_support_wait(|| mock.count("session.end") == 1 && !mock.session_active()).await;
     assert!(ended, "the orphaned session must be ended");
 }
+
+/// BRW-38: The debugger of a tab attaches to its own descriptor through rdp_client without activating the tab.
+#[tokio::test]
+async fn debugger_attaches_to_a_tab_without_activating_it() {
+    // Given an attached Firefox with RDP, two tabs on the same URL, each context mapped to its browserId
+    let firefox = MockFirefox::start(true).await.unwrap();
+    let config = attach_only(firefox.bidi_port())
+        .rdp_port(firefox.rdp_port().unwrap())
+        .build();
+    let browser = Browser::ensure(config).await.unwrap();
+    let rdp = firefox.rdp().unwrap();
+    let capture: serde_json::Value =
+        serde_json::from_str(crate::test_support::fixtures::RDP_LIST_TABS_TWO_TABS).unwrap();
+    rdp.set_tabs(capture["tabs"].as_array().unwrap().clone());
+    let first = browser
+        .new_tab("http://127.0.0.1:44223/inline")
+        .await
+        .unwrap();
+    let second = browser
+        .new_tab("http://127.0.0.1:44223/inline")
+        .await
+        .unwrap();
+    rdp.map_context(first.context_id(), 11);
+    rdp.map_context(second.context_id(), 12);
+
+    // When the debugger of the second tab is attached
+    let client = browser.rdp_client().await.unwrap();
+    crate::Debugger::attach_to_context(&client, second.context_id())
+        .await
+        .unwrap();
+
+    // Then its own descriptor is asked for the watcher, and no tab is activated
+    let watchers: Vec<_> = rdp
+        .requests()
+        .into_iter()
+        .filter(|r| r.request_type == "getWatcher")
+        .map(|r| r.to)
+        .collect();
+    assert_eq!(watchers, ["server1.conn0.tabDescriptor3"]);
+    assert_eq!(firefox.bidi().count("browsingContext.activate"), 0);
+}

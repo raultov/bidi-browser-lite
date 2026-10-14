@@ -45,6 +45,32 @@ pub(crate) const RDP_EVALUATE_REPLY: &str = include_str!("fixtures/rdp/evaluate_
 pub(crate) const RDP_EVALUATION_RESULT: &str = include_str!("fixtures/rdp/evaluation_result.json");
 pub(crate) const RDP_SOURCE_LONG_STRING: &str =
     include_str!("fixtures/rdp/source_long_string.json");
+pub(crate) const RDP_GET_PROCESS: &str = include_str!("fixtures/rdp/get_process.json");
+pub(crate) const RDP_PARENT_PROCESS_TARGET: &str =
+    include_str!("fixtures/rdp/parent_process_target.json");
+pub(crate) const RDP_BROWSER_ID_LOOKUP: &str = include_str!("fixtures/rdp/browser_id_lookup.json");
+pub(crate) const RDP_BROWSER_ID_LOOKUP_NULL: &str =
+    include_str!("fixtures/rdp/browser_id_lookup_null.json");
+
+/// Captured `listTabs` reply with three tabs, the last two on the same URL
+/// (`browserId` 2/11/12, `browsingContextID` 3/12/13), for
+/// [`MockRdp::set_tabs`](super::MockRdp::set_tabs).
+pub const RDP_LIST_TABS_TWO_TABS: &str = include_str!("fixtures/rdp/list_tabs_two_tabs.json");
+
+/// Captured `getBreakpointPositionsCompressed` reply of the first inline
+/// `<script>` of a page for a line it does not cover (`positions: {}`).
+pub const RDP_BREAKPOINT_POSITIONS_INLINE_NONE: &str =
+    include_str!("fixtures/rdp/breakpoint_positions_inline_none.json");
+
+/// Captured `getBreakpointPositionsCompressed` reply of the second inline
+/// `<script>` of the same page for line 9 (`positions: {"9": [2]}`).
+pub const RDP_BREAKPOINT_POSITIONS_INLINE_SECOND: &str =
+    include_str!("fixtures/rdp/breakpoint_positions_inline_second.json");
+
+/// Captured `forwardingCancelled` notification sent by `root` after a
+/// debugger detached and its tab closed.
+pub const RDP_FORWARDING_CANCELLED: &str = include_str!("fixtures/rdp/forwarding_cancelled.json");
+
 /// Captured `websocket` resources from Firefox 157 (open, frame sent/recv, close).
 pub const RDP_RESOURCES_WEBSOCKET: &str = include_str!("fixtures/rdp/resources_websocket.json");
 
@@ -61,7 +87,7 @@ pub const RDP_RESOURCES_PLATFORM_MESSAGE: &str =
 
 /// Every embedded fixture, for the parse test.
 #[cfg(test)]
-pub(crate) const ALL: [&str; 35] = [
+pub(crate) const ALL: [&str; 43] = [
     SESSION_STATUS_READY,
     SESSION_STATUS_BUSY,
     SESSION_NEW,
@@ -93,6 +119,14 @@ pub(crate) const ALL: [&str; 35] = [
     RDP_EVALUATE_REPLY,
     RDP_EVALUATION_RESULT,
     RDP_SOURCE_LONG_STRING,
+    RDP_GET_PROCESS,
+    RDP_PARENT_PROCESS_TARGET,
+    RDP_BROWSER_ID_LOOKUP,
+    RDP_BROWSER_ID_LOOKUP_NULL,
+    RDP_LIST_TABS_TWO_TABS,
+    RDP_BREAKPOINT_POSITIONS_INLINE_NONE,
+    RDP_BREAKPOINT_POSITIONS_INLINE_SECOND,
+    RDP_FORWARDING_CANCELLED,
     RDP_RESOURCES_WEBSOCKET,
     RDP_RESOURCES_ERROR_MESSAGE,
     RDP_RESOURCES_CSS_MESSAGE,

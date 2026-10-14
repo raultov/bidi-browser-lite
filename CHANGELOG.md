@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `test-support`: `MockRdp` answers the parent-process lookup behind `bidi-lite`'s `RdpClient::tab_for_context` / `Debugger::attach_to_context` (`getProcess`, `getTarget`, the `NavigableManager` evaluation): `map_context()` maps a BiDi context to a `browserId` (unmapped contexts answer `null`), `fail_parent_console_once()` makes the parent console answer `noSuchActor` once.
+- `test-support`: `MockRdp::set_tabs()` replaces the `listTabs` descriptors; `MockRdp::add_source()` declares sources sharing a URL with their breakpoint positions per line (several inline `<script>` blocks); `MockRdp::emit_before_reply()` sends a packet right before the reply to a request type.
+- `test-support`: real Firefox 157 RDP fixtures from `bidi-lite` 0.1.3: `fixtures::RDP_LIST_TABS_TWO_TABS`, `RDP_BREAKPOINT_POSITIONS_INLINE_NONE`, `RDP_BREAKPOINT_POSITIONS_INLINE_SECOND`, `RDP_FORWARDING_CANCELLED`, plus the parent-process lookup frames used internally.
+
+### Changed
+- Dependencies: requires `bidi-lite` 0.1.3 (`Debugger::attach_to_context`, `set_breakpoint_resolved`, `breakable_column`, the `forwardingCancelled` fix).
+- README, `examples/debugger.rs` and `Browser::rdp_client` docs attach the debugger with `Debugger::attach_to_context(&rdp, tab.context_id())` instead of activating the tab and using `attach_selected`.
+
 ## [0.1.4] - 2026-10-12
 
 ### Added

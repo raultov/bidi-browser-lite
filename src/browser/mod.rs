@@ -107,8 +107,9 @@ impl Browser {
 
     /// The Firefox debugger (RDP) client, cached and reconnected when its
     /// socket died. Fails with [`BrowserError::RdpDisabled`] unless RDP was
-    /// enabled. Attaching a `Debugger` to a tab is left to the caller
-    /// (`bidi_lite::rdp::debugger::Debugger::attach_by_url`).
+    /// enabled. Attaching a `Debugger` to a tab is left to the caller:
+    /// `Debugger::attach_to_context(&rdp, tab.context_id())` finds the tab
+    /// showing a BiDi context without activating it.
     pub async fn rdp_client(&self) -> Result<RdpClient, BrowserError> {
         let mut state = self.live_state().await?;
         let port = state.rdp_port.ok_or(BrowserError::RdpDisabled)?;

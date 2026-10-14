@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use bidi_browser_lite::{
-    Browser, BrowserConfig, BrowserConfigBuilder, BrowserError, LaunchMode, ProfileError,
+    Browser, BrowserConfig, BrowserConfigBuilder, BrowserError, Debugger, LaunchMode, ProfileError,
     ProfileMode, ReadinessState, discovery, probe,
 };
 use serde_json::json;
@@ -165,4 +165,29 @@ async fn profile_in_use_is_refused() {
         .await
         .unwrap();
     again.stop().await.unwrap();
+}
+
+/// RFX-08: Each tab's debugger, attached by its BiDi context, reads that tab's page.
+#[tokio::test]
+#[ignore = "requires a real Firefox"]
+async fn debugger_attaches_to_each_context() {
+    let browser = Browser::ensure(launch().rdp(true).build()).await.unwrap();
+    let rdp = browser.rdp_client().await.unwrap();
+    let page = "data:text/html,<title>same</title>";
+    let mut seen = Vec::new();
+    for _ in 0..2 {
+        let tab = browser.new_tab(page).await.unwrap();
+        let id = tab.context_id();
+        let mark = json!({ "expression": format!("window.name = {id:?}"),
+            "target": tab.script_target(), "awaitPromise": false });
+        tab.send_raw_command("script.evaluate", mark).await.unwrap();
+        let debugger = Debugger::attach_to_context(&rdp, id).await.unwrap();
+        let name = debugger.evaluate("window.name").await.unwrap();
+        seen.push((id.to_owned(), name.result));
+        debugger.detach().await.unwrap();
+    }
+    browser.stop().await.unwrap();
+    for (id, name) in seen {
+        assert_eq!(name, json!(id));
+    }
 }

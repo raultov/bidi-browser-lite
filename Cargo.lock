@@ -31,9 +31,9 @@ dependencies = [
 
 [[package]]
 name = "bidi-lite"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f47886cee4357224d3a1646a2729ef2609e3e5361e90bd36b3bd1c1fb0e66a1"
+checksum = "0b6ebaac475bad8e44dc9bf8cf1bbc42230557cab7e9b085618d232f899ee3f7"
 dependencies = [
  "futures-util",
  "oneshot",
