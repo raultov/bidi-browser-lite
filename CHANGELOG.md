@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-11-01
+
 ### Added
 - `test-support`: `MockRdp` serves iframes of another origin, which Firefox runs
   as targets of their own (followed by `bidi-lite` 0.1.5's `Debugger`):
