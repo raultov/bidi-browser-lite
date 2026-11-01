@@ -27,6 +27,9 @@ Origin of embedded frames in `src/test_support/fixtures/`.
   first source (`{}`) and the second (`{"9": [2]}`).
 - `rdp/forwarding_cancelled.json`: `forwardingCancelled` from `root` after a debugger detached and its
   tab closed.
+- `rdp/frame_target_available.json` (Firefox 159.0, headless): `target-available-form` of an iframe
+  of another origin (`localhost` in a page of `127.0.0.1`), which Firefox runs in its own process:
+  `isTopLevelTarget: false`, its own `threadActor` and `consoleActor`, `browsingContextID`, `url`.
 
 ## Hand-made fixtures (`*.handmade.json`)
 

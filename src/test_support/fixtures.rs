@@ -28,6 +28,10 @@ pub(crate) const RDP_UNRECOGNIZED: &str =
     include_str!("fixtures/rdp/unrecognized_packet_type.json");
 pub(crate) const RDP_GET_WATCHER: &str = include_str!("fixtures/rdp/get_watcher.json");
 pub(crate) const RDP_TARGET_AVAILABLE: &str = include_str!("fixtures/rdp/target_available.json");
+/// `target-available-form` of an iframe of another origin (Firefox 159):
+/// `isTopLevelTarget: false`, its own thread and console actors.
+pub(crate) const RDP_FRAME_TARGET_AVAILABLE: &str =
+    include_str!("fixtures/rdp/frame_target_available.json");
 pub(crate) const RDP_TARGET_DESTROYED: &str = include_str!("fixtures/rdp/target_destroyed.json");
 pub(crate) const RDP_RESOURCES_SOURCES: &str = include_str!("fixtures/rdp/resources_sources.json");
 pub(crate) const RDP_BREAKPOINT_POSITIONS: &str =
@@ -87,7 +91,7 @@ pub const RDP_RESOURCES_PLATFORM_MESSAGE: &str =
 
 /// Every embedded fixture, for the parse test.
 #[cfg(test)]
-pub(crate) const ALL: [&str; 43] = [
+pub(crate) const ALL: [&str; 44] = [
     SESSION_STATUS_READY,
     SESSION_STATUS_BUSY,
     SESSION_NEW,
@@ -108,6 +112,7 @@ pub(crate) const ALL: [&str; 43] = [
     RDP_UNRECOGNIZED,
     RDP_GET_WATCHER,
     RDP_TARGET_AVAILABLE,
+    RDP_FRAME_TARGET_AVAILABLE,
     RDP_TARGET_DESTROYED,
     RDP_RESOURCES_SOURCES,
     RDP_BREAKPOINT_POSITIONS,

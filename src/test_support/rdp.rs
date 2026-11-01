@@ -32,6 +32,13 @@ struct TargetState {
     console_actor: String,
 }
 
+/// An iframe of another origin: a target of its own, and its sources.
+struct MockFrame {
+    target: TargetState,
+    url: String,
+    sources: Vec<Value>,
+}
+
 struct State {
     requests: Vec<RecordedRdpRequest>,
     senders: HashMap<u64, tokio::sync::mpsc::UnboundedSender<Value>>,
@@ -55,6 +62,9 @@ struct State {
     added_sources: Vec<Value>,
     source_positions: HashMap<String, Value>,
     before_reply: HashMap<String, Vec<Value>>,
+    targets_watched: bool,
+    frames: Vec<MockFrame>,
+    frame_count: usize,
 }
 
 impl State {
@@ -92,7 +102,26 @@ impl State {
             added_sources: Vec::new(),
             source_positions: HashMap::new(),
             before_reply: HashMap::new(),
+            targets_watched: false,
+            frames: Vec::new(),
+            frame_count: 0,
         }
+    }
+
+    /// Sends `packet` to every connection.
+    fn broadcast(&self, packet: &Value) {
+        for tx in self.senders.values() {
+            let _ = tx.send(packet.clone());
+        }
+    }
+
+    /// The target whose thread actor is `thread`: a frame's, else the tab's.
+    fn target_of_thread(&self, thread: &str) -> &TargetState {
+        self.frames
+            .iter()
+            .map(|frame| &frame.target)
+            .find(|target| target.thread_actor == thread)
+            .unwrap_or(&self.target)
     }
 }
 
@@ -215,6 +244,91 @@ impl MockRdp {
     /// Announces a pause twice: as a `paused` packet and as a `thread-state` resource.
     pub fn pause(&self, why: &str, frame: Option<Value>) {
         let state = self.shared.lock();
+        let target = state.target.clone();
+        announce_pause(&state, &target, why, frame);
+    }
+
+    /// Announces a pause of the thread of the iframe `frame_target` (see
+    /// [`MockRdp::add_frame`]), as [`MockRdp::pause`] does for the tab's.
+    pub fn pause_frame(&self, frame_target: &str, why: &str, frame: Option<Value>) {
+        let state = self.shared.lock();
+        let found = state.frames.iter().find(|f| f.target.actor == frame_target);
+        if let Some(target) = found.map(|f| f.target.clone()) {
+            announce_pause(&state, &target, why, frame);
+        }
+    }
+
+    /// Adds an iframe of another origin showing `url`: a target of its own,
+    /// with its own thread and console, as Firefox runs such frames in
+    /// another process. It is announced (`target-available-form` with
+    /// `isTopLevelTarget: false`) at once if targets are watched, and on each
+    /// later `watchTargets`. Its thread answers like the tab's. Returns its
+    /// target actor.
+    pub fn add_frame(&self, url: &str) -> String {
+        let mut state = self.shared.lock();
+        state.frame_count += 1;
+        let process = format!("server1.conn1.watcher2.process{}", 20 + state.frame_count);
+        let frame = MockFrame {
+            target: TargetState {
+                actor: format!("{process}//windowGlobalTarget2"),
+                thread_actor: format!("{process}//thread1"),
+                console_actor: format!("{process}//consoleActor3"),
+            },
+            url: url.to_owned(),
+            sources: Vec::new(),
+        };
+        let actor = frame.target.actor.clone();
+        if state.targets_watched {
+            state.broadcast(&frame_available(&state.watcher_actor, &frame));
+        }
+        state.frames.push(frame);
+        actor
+    }
+
+    /// Adds a source with `url` to the iframe `frame_target`, whose
+    /// `getBreakpointPositionsCompressed` answers `positions` (as
+    /// [`MockRdp::add_source`]). It is announced from the frame's target at
+    /// once if sources are watched, and on each later `watchResources`.
+    /// Returns its actor.
+    pub fn add_frame_source(&self, frame_target: &str, url: &str, positions: Value) -> String {
+        let mut state = self.shared.lock();
+        let watched = state.watched_resources.contains("source");
+        let Some(frame) = state
+            .frames
+            .iter_mut()
+            .find(|f| f.target.actor == frame_target)
+        else {
+            return String::new();
+        };
+        let process = frame_target.split("//").next().unwrap_or_default();
+        let actor = format!("{process}//source{}", frame.sources.len() + 1);
+        let resource = source_resource(&actor, url);
+        frame.sources.push(resource.clone());
+        let packet = sources_packet(frame_target, vec![resource]);
+        state.source_positions.insert(actor.clone(), positions);
+        if watched {
+            state.broadcast(&packet);
+        }
+        actor
+    }
+
+    /// Removes the iframe `frame_target`, announcing its
+    /// `target-destroyed-form`.
+    pub fn remove_frame(&self, frame_target: &str) {
+        let mut state = self.shared.lock();
+        state.frames.retain(|f| f.target.actor != frame_target);
+        let mut destroyed = load(fx::RDP_TARGET_DESTROYED);
+        destroyed["from"] = Value::from(state.watcher_actor.as_str());
+        destroyed["target"]["actor"] = Value::from(frame_target);
+        destroyed["target"]["isTopLevelTarget"] = Value::from(false);
+        state.broadcast(&destroyed);
+    }
+}
+
+/// Announces a pause of `target`'s thread twice: as a `paused` packet from
+/// the thread and as a `thread-state` resource from the target.
+fn announce_pause(state: &State, target: &TargetState, why: &str, frame: Option<Value>) {
+    {
         let frame_val = frame.unwrap_or_else(|| {
             let mut default_frame = load(fx::RDP_THREAD_STATE_PAUSED)["frame"].clone();
             default_frame["where"]["line"] = Value::from(state.current_line);
@@ -223,21 +337,21 @@ impl MockRdp {
         });
         let paused_packet = json!({
             "type": "paused",
-            "actor": format!("{}//pause1", state.target.thread_actor),
-            "from": state.target.thread_actor,
+            "actor": format!("{}//pause1", target.thread_actor),
+            "from": target.thread_actor,
             "why": { "type": why, "actors": [Value::Null] },
             "frame": frame_val.clone(),
         });
         let mut resource_packet = load(fx::RDP_RESOURCES_THREAD_STATE_PAUSED);
-        resource_packet["from"] = Value::from(state.target.actor.clone());
+        resource_packet["from"] = Value::from(target.actor.clone());
         resource_packet["array"][0][1][0]["why"]["type"] = Value::from(why);
         resource_packet["array"][0][1][0]["frame"] = frame_val;
-        for tx in state.senders.values() {
-            let _ = tx.send(paused_packet.clone());
-            let _ = tx.send(resource_packet.clone());
-        }
+        state.broadcast(&paused_packet);
+        state.broadcast(&resource_packet);
     }
+}
 
+impl MockRdp {
     /// Swaps the target with new thread and console actors, announcing the switch.
     pub fn navigate(&self) {
         let mut state = self.shared.lock();
@@ -332,21 +446,11 @@ impl MockRdp {
             "server1.conn1.watcher2.process7//source_added_{}",
             state.added_sources.len() + 1
         );
-        let mut resource = load(fx::RDP_RESOURCES_SOURCES)["array"][0][1][0].clone();
-        resource["actor"] = Value::from(actor.as_str());
-        resource["url"] = Value::from(url);
-        resource["sourceMapBaseURL"] = Value::from(url);
+        let resource = source_resource(&actor, url);
         state.added_sources.push(resource.clone());
         state.source_positions.insert(actor.clone(), positions);
         if state.watched_resources.contains("source") {
-            let packet = json!({
-                "type": "resources-available-array",
-                "from": state.target.actor,
-                "array": [ [ "source", [ resource ] ] ]
-            });
-            for tx in state.senders.values() {
-                let _ = tx.send(packet.clone());
-            }
+            state.broadcast(&sources_packet(&state.target.actor, vec![resource]));
         }
         actor
     }
@@ -362,6 +466,36 @@ impl MockRdp {
             .or_default()
             .push(packet);
     }
+}
+
+/// A `source` resource with `actor` and `url`, shaped like the captured one.
+fn source_resource(actor: &str, url: &str) -> Value {
+    let mut resource = load(fx::RDP_RESOURCES_SOURCES)["array"][0][1][0].clone();
+    resource["actor"] = Value::from(actor);
+    resource["url"] = Value::from(url);
+    resource["sourceMapBaseURL"] = Value::from(url);
+    resource
+}
+
+/// The `resources-available-array` announcing `sources` from target `from`.
+fn sources_packet(from: &str, sources: Vec<Value>) -> Value {
+    json!({
+        "type": "resources-available-array",
+        "from": from,
+        "array": [ [ "source", sources ] ]
+    })
+}
+
+/// The captured `target-available-form` of an iframe, as `frame`'s, from
+/// the watcher `watcher`.
+fn frame_available(watcher: &str, frame: &MockFrame) -> Value {
+    let mut form = load(fx::RDP_FRAME_TARGET_AVAILABLE);
+    form["from"] = Value::from(watcher);
+    form["target"]["actor"] = Value::from(frame.target.actor.as_str());
+    form["target"]["threadActor"] = Value::from(frame.target.thread_actor.as_str());
+    form["target"]["consoleActor"] = Value::from(frame.target.console_actor.as_str());
+    form["target"]["url"] = Value::from(frame.url.as_str());
+    form
 }
 
 /// The string at `path` in a fixture, empty if absent.
@@ -652,10 +786,12 @@ fn handle_watcher(
             Some(json!({ "from": to, "configuration": { "actor": state.thread_config_actor } })),
             Vec::new(),
         ),
-        "watchTargets" => (
-            Some(json!({ "from": to })),
-            vec![build_target_available(state, to)],
-        ),
+        "watchTargets" => {
+            state.targets_watched = true;
+            let mut forms = vec![build_target_available(state, to)];
+            forms.extend(state.frames.iter().map(|frame| frame_available(to, frame)));
+            (Some(json!({ "from": to })), forms)
+        }
         "watchResources" => handle_watch_resources(state, to, packet),
         "unwatchResources" => {
             for t in extract_resource_types(packet) {
@@ -691,6 +827,12 @@ fn handle_watch_resources(
             sources.extend(state.added_sources.iter().cloned());
         }
         notifs.push(notif);
+        let frames = state
+            .frames
+            .iter()
+            .filter(|frame| !frame.sources.is_empty());
+        notifs
+            .extend(frames.map(|frame| sources_packet(&frame.target.actor, frame.sources.clone())));
     }
     for t in types {
         state.watched_resources.insert(t);
@@ -780,7 +922,7 @@ fn handle_resume(state: &mut State, to: &str, packet: &Value) -> (Option<Value>,
     resumed["from"] = Value::from(to);
     if packet.get("resumeLimit").is_none() || packet["resumeLimit"].is_null() {
         let mut thread_state = load(fx::RDP_RESOURCES_THREAD_STATE_RESUMED);
-        thread_state["from"] = Value::from(state.target.actor.clone());
+        thread_state["from"] = Value::from(state.target_of_thread(to).actor.clone());
         return (Some(json!({ "from": to })), vec![resumed, thread_state]);
     }
     state.current_line += 1;
@@ -790,7 +932,7 @@ fn handle_resume(state: &mut State, to: &str, packet: &Value) -> (Option<Value>,
     paused["frame"]["where"]["line"] = Value::from(state.current_line);
     let combined = json!({
         "type": "resources-available-array",
-        "from": state.target.actor,
+        "from": state.target_of_thread(to).actor,
         "array": [ [ "thread-state", [
             { "state": "resumed" },
             { "state": "paused", "why": { "type": "resumeLimit" }, "frame": paused["frame"].clone() }
@@ -1457,5 +1599,135 @@ mod tests {
         // Then the real reply is returned
         assert_eq!(tabs.len(), 1);
         assert_eq!(tabs[0].actor, "server1.conn1.tabDescriptor1");
+    }
+
+    /// The script of the mock's iframe of another origin.
+    const FRAME_SCRIPT: &str = "http://localhost:8765/inner.js";
+
+    /// MCK-42: An iframe of another origin is announced with its own target
+    /// and sources, whether added before or after the debugger attached, and
+    /// is gone once removed.
+    #[tokio::test]
+    async fn frames_are_announced_with_their_sources() {
+        // Given a frame added before the debugger attaches, with a source
+        let mock = MockRdp::start().await.unwrap();
+        let early = mock.add_frame("http://localhost:8765/inner.html");
+        let early_source = mock.add_frame_source(&early, FRAME_SCRIPT, json!({ "2": [16] }));
+        let client = connected(&mock).await;
+        let debugger = Debugger::attach_selected(&client).await.unwrap();
+
+        // Then it is known with its source, apart from the tab's
+        let known = || {
+            debugger
+                .frame_sources(&early)
+                .iter()
+                .any(|s| s.actor == early_source)
+        };
+        assert!(crate::test_support_wait(known).await);
+        assert!(
+            debugger
+                .sources()
+                .iter()
+                .all(|s| s.url.as_deref() != Some(FRAME_SCRIPT))
+        );
+        let frame = &debugger.frame_targets()[0];
+        assert_ne!(frame.thread_actor, debugger.thread_actor());
+
+        // When another frame is added after, with a source, and the first is removed
+        let late = mock.add_frame("http://localhost:8765/other.html");
+        let late_source = mock.add_frame_source(&late, FRAME_SCRIPT, json!({}));
+        mock.remove_frame(&early);
+
+        // Then only the late frame remains, with its source
+        let late_known = || {
+            debugger
+                .frame_sources(&late)
+                .iter()
+                .any(|s| s.actor == late_source)
+        };
+        assert!(crate::test_support_wait(late_known).await);
+        let only_late = || {
+            debugger
+                .frame_targets()
+                .iter()
+                .map(|f| f.actor.clone())
+                .eq([late.clone()])
+        };
+        assert!(crate::test_support_wait(only_late).await);
+    }
+
+    /// MCK-43: A frame's thread pauses from its own target, and resumes
+    /// through its own thread actor.
+    #[tokio::test]
+    async fn frame_threads_pause_and_resume_on_their_own() {
+        // Given an attached debugger and a frame
+        let mock = MockRdp::start().await.unwrap();
+        let frame = mock.add_frame("http://localhost:8765/inner.html");
+        let client = connected(&mock).await;
+        let debugger = Debugger::attach_selected(&client).await.unwrap();
+        let known = || debugger.thread_of(&frame).is_some();
+        assert!(crate::test_support_wait(known).await);
+        let mut states = debugger.on_any_thread_state();
+
+        // When the frame pauses at a breakpoint
+        mock.pause_frame(&frame, "breakpoint", None);
+
+        // Then the pause comes from the frame's target
+        let packet = tokio::time::timeout(T, states.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(packet.from.as_deref(), Some(frame.as_str()));
+        assert!(matches!(
+            parse_thread_states(&packet).as_slice(),
+            [bidi_lite::rdp::resources::ThreadState::Paused { .. }]
+        ));
+
+        // When the frame's thread resumes
+        let thread = debugger.thread_of(&frame).unwrap();
+        thread.resume().await.unwrap();
+
+        // Then the request went to its thread, and its target says it resumed
+        let resumed = mock.wait_for_request("resume", T).await.unwrap();
+        assert_eq!(resumed.to, thread.thread_actor());
+        let packet = tokio::time::timeout(T, states.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(packet.from.as_deref(), Some(frame.as_str()));
+    }
+
+    /// MCK-44: A column-less breakpoint on a frame's script binds at that
+    /// source's first breakable column.
+    #[tokio::test]
+    async fn breakpoints_bind_in_frame_sources() {
+        // Given a frame whose inner.js breaks at line 2, column 16
+        let mock = MockRdp::start().await.unwrap();
+        let frame = mock.add_frame("http://localhost:8765/inner.html");
+        let source = mock.add_frame_source(&frame, FRAME_SCRIPT, json!({ "2": [16] }));
+        let client = connected(&mock).await;
+        let debugger = Debugger::attach_selected(&client).await.unwrap();
+        let known = || !debugger.frame_sources(&frame).is_empty();
+        assert!(crate::test_support_wait(known).await);
+
+        // When a breakpoint is set on line 2 without a column
+        let location = BreakpointLocation {
+            source_url: FRAME_SCRIPT.to_string(),
+            line: 2,
+            column: None,
+        };
+        let bound = debugger
+            .set_breakpoint_resolved(&location, None)
+            .await
+            .unwrap();
+
+        // Then the frame's source was asked, and it binds at column 16
+        assert_eq!(
+            types_sent(&mock, "getBreakpointPositionsCompressed"),
+            [source]
+        );
+        assert_eq!((bound.location.column, bound.resolved), (Some(16), true));
     }
 }

@@ -305,7 +305,11 @@ it answers the parent-process lookup (`getProcess`, `getTarget`, the
 (`fixtures::RDP_LIST_TABS_TWO_TABS` has two on the same URL); `add_source()`
 declares extra sources with their breakpoint positions per line, as the
 inline `<script>` blocks of one page; `emit_before_reply()` sends a packet
-(e.g. `fixtures::RDP_FORWARDING_CANCELLED`) right before a reply.
+(e.g. `fixtures::RDP_FORWARDING_CANCELLED`) right before a reply. Iframes of
+another origin, which Firefox runs as targets of their own: `add_frame()`
+announces one (with its own thread and console), `add_frame_source()` gives
+it sources, `pause_frame()` pauses its thread and `remove_frame()` destroys
+it; requests to its thread and console are answered like the tab's.
 
 The `fake_firefox_helper` binary (same feature) stands in for Firefox in
 launch tests: point `firefox_path` at it and pick a behaviour with the

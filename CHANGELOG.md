@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `test-support`: `MockRdp` serves iframes of another origin, which Firefox runs
+  as targets of their own (followed by `bidi-lite` 0.1.5's `Debugger`):
+  `add_frame()` announces one (`target-available-form` with
+  `isTopLevelTarget: false`, its own thread and console actors, also on later
+  `watchTargets`), `add_frame_source()` gives it sources with breakpoint
+  positions (also on later `watchResources`), `pause_frame()` pauses its thread
+  and `remove_frame()` destroys it. Its thread's `resume` answers from its own
+  target.
+- `test-support`: real Firefox 159 fixture of an iframe's target
+  (`frame_target_available.json`).
+
+### Changed
+- Dependencies: requires `bidi-lite` 0.1.5 (frame targets, `TargetThread`).
+
 ## [0.1.5] - 2026-10-14
 
 ### Added
