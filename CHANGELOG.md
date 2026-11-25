@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-11-25
+
 ### Changed
 - Dependencies: requires `bidi-lite` 0.1.6. Its `Debugger` follows the tab's
   service workers once asked (`watch_service_workers`, `service_worker_targets`,
