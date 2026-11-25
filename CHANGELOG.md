@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Dependencies: requires `bidi-lite` 0.1.6. Its `Debugger` follows the tab's
+  service workers once asked (`watch_service_workers`, `service_worker_targets`,
+  `on_service_worker_resource`; their console messages need the Firefox pref
+  `dom.worker.console.dispatch_events_to_main_thread` set to `false`), skips a
+  source whose actor is gone when resolving a breakpoint's column, and no
+  longer follows again a frame that ended. `MockRdp` does not announce service
+  workers yet: `watch_service_workers` gets its reply, and no worker.
+
 ## [0.1.6] - 2026-11-01
 
 ### Added
