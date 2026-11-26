@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-11-26
+
 ### Added
 - `test-support`: `MockRdp` serves the tab's workers, which `bidi-lite` 0.1.7's
   `Debugger` follows (raultov/bidi-lite#2): `add_worker()` and

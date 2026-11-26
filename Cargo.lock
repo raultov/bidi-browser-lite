@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "bidi-browser-lite"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "bidi-lite",
  "futures-util",
