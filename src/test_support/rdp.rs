@@ -39,6 +39,31 @@ struct MockFrame {
     sources: Vec<Value>,
 }
 
+/// The `targetType` of dedicated workers.
+const DEDICATED_WORKER: &str = "worker";
+/// The `targetType` of service workers.
+const SERVICE_WORKER: &str = "service_worker";
+
+/// A worker: a target of its own, announced while its kind is watched.
+struct MockWorker {
+    target: TargetState,
+    /// [`DEDICATED_WORKER`] or [`SERVICE_WORKER`].
+    target_type: &'static str,
+    url: String,
+    id: String,
+    /// The actor of its script, announced as its source.
+    source_actor: String,
+}
+
+/// The worker `targetType` `target_type` names, if it names one.
+fn worker_kind(target_type: Option<&str>) -> Option<&'static str> {
+    match target_type {
+        Some(DEDICATED_WORKER) => Some(DEDICATED_WORKER),
+        Some(SERVICE_WORKER) => Some(SERVICE_WORKER),
+        _ => None,
+    }
+}
+
 struct State {
     requests: Vec<RecordedRdpRequest>,
     senders: HashMap<u64, tokio::sync::mpsc::UnboundedSender<Value>>,
@@ -65,6 +90,9 @@ struct State {
     targets_watched: bool,
     frames: Vec<MockFrame>,
     frame_count: usize,
+    workers: Vec<MockWorker>,
+    worker_count: usize,
+    watched_workers: HashSet<&'static str>,
 }
 
 impl State {
@@ -105,6 +133,9 @@ impl State {
             targets_watched: false,
             frames: Vec::new(),
             frame_count: 0,
+            workers: Vec::new(),
+            worker_count: 0,
+            watched_workers: HashSet::new(),
         }
     }
 
@@ -115,13 +146,28 @@ impl State {
         }
     }
 
-    /// The target whose thread actor is `thread`: a frame's, else the tab's.
+    /// The target whose thread actor is `thread`: a frame's or a worker's,
+    /// else the tab's.
     fn target_of_thread(&self, thread: &str) -> &TargetState {
-        self.frames
-            .iter()
-            .map(|frame| &frame.target)
+        let frames = self.frames.iter().map(|frame| &frame.target);
+        let workers = self.workers.iter().map(|worker| &worker.target);
+        frames
+            .chain(workers)
             .find(|target| target.thread_actor == thread)
             .unwrap_or(&self.target)
+    }
+
+    /// Announces `worker` (its `target-available-form`, then its source if
+    /// sources are watched), after the reply being sent.
+    fn announce_worker(&self, worker: &MockWorker) {
+        self.broadcast(&worker_form(
+            &self.watcher_actor,
+            worker,
+            "target-available-form",
+        ));
+        if self.watched_resources.contains("source") {
+            self.broadcast(&worker_sources(worker));
+        }
     }
 }
 
@@ -312,6 +358,80 @@ impl MockRdp {
         actor
     }
 
+    /// Starts a dedicated worker running the script `url`: a target of its
+    /// own (`targetType: "worker"`), with its own thread and console, and the
+    /// script as its source. Like Firefox, it is announced only while
+    /// dedicated workers are watched (`watchTargets` with `targetType:
+    /// "worker"`), *after* the reply: at once if they are, and on each later
+    /// such `watchTargets`. Returns its target actor.
+    pub fn add_worker(&self, url: &str) -> String {
+        self.start_worker(DEDICATED_WORKER, url)
+    }
+
+    /// Starts a service worker running the script `url`, as
+    /// [`MockRdp::add_worker`] does a dedicated one (`targetType:
+    /// "service_worker"`). Returns its target actor.
+    pub fn add_service_worker(&self, url: &str) -> String {
+        self.start_worker(SERVICE_WORKER, url)
+    }
+
+    /// Ends the worker `worker_target` (terminated, its document gone, or a
+    /// service worker Firefox stopped), announcing its whole form as a
+    /// `target-destroyed-form`, as Firefox does.
+    pub fn remove_worker(&self, worker_target: &str) {
+        let mut state = self.shared.lock();
+        let Some(index) = state
+            .workers
+            .iter()
+            .position(|w| w.target.actor == worker_target)
+        else {
+            return;
+        };
+        let worker = state.workers.remove(index);
+        state.broadcast(&worker_form(
+            &state.watcher_actor,
+            &worker,
+            "target-destroyed-form",
+        ));
+    }
+
+    /// Emits a `resources-available-array` packet of `resource_type` from the
+    /// target `target` (a frame's or a worker's, or the tab's): e.g. a
+    /// worker's `console-message` resources, which Firefox sends from the
+    /// worker's own target.
+    pub fn emit_target_resources(&self, target: &str, resource_type: &str, resources: Vec<Value>) {
+        let packet = json!({
+            "type": "resources-available-array",
+            "from": target,
+            "array": [ [ resource_type, resources ] ]
+        });
+        self.shared.lock().broadcast(&packet);
+    }
+
+    fn start_worker(&self, target_type: &'static str, url: &str) -> String {
+        let mut state = self.shared.lock();
+        state.worker_count += 1;
+        let n = state.worker_count;
+        let base = format!("server1.conn1.watcher2.process{}//workerTarget{n}", 40 + n);
+        let worker = MockWorker {
+            target: TargetState {
+                actor: format!("{base}/workerTarget5"),
+                thread_actor: format!("{base}/thread1"),
+                console_actor: format!("{base}/console2"),
+            },
+            target_type,
+            url: url.to_owned(),
+            id: format!("mock-worker-{n}"),
+            source_actor: format!("{base}/source6"),
+        };
+        if state.watched_workers.contains(target_type) {
+            state.announce_worker(&worker);
+        }
+        let actor = worker.target.actor.clone();
+        state.workers.push(worker);
+        actor
+    }
+
     /// Removes the iframe `frame_target`, announcing its
     /// `target-destroyed-form`.
     pub fn remove_frame(&self, frame_target: &str) {
@@ -496,6 +616,32 @@ fn frame_available(watcher: &str, frame: &MockFrame) -> Value {
     form["target"]["consoleActor"] = Value::from(frame.target.console_actor.as_str());
     form["target"]["url"] = Value::from(frame.url.as_str());
     form
+}
+
+/// The captured form of a worker of `worker`'s kind, as `worker`'s, from the
+/// watcher `watcher`, of `form_type` (`target-available-form` or
+/// `target-destroyed-form`).
+fn worker_form(watcher: &str, worker: &MockWorker, form_type: &str) -> Value {
+    let captured = match worker.target_type {
+        SERVICE_WORKER => fx::RDP_SERVICE_WORKER_TARGET_AVAILABLE,
+        _ => fx::RDP_WORKER_TARGET_AVAILABLE,
+    };
+    let mut form = load(captured);
+    form["type"] = Value::from(form_type);
+    form["from"] = Value::from(watcher);
+    let target = &mut form["target"];
+    target["actor"] = Value::from(worker.target.actor.as_str());
+    target["threadActor"] = Value::from(worker.target.thread_actor.as_str());
+    target["consoleActor"] = Value::from(worker.target.console_actor.as_str());
+    target["url"] = Value::from(worker.url.as_str());
+    target["id"] = Value::from(worker.id.as_str());
+    form
+}
+
+/// The `source` resource of `worker`'s script, from its target.
+fn worker_sources(worker: &MockWorker) -> Value {
+    let source = source_resource(&worker.source_actor, &worker.url);
+    sources_packet(&worker.target.actor, vec![source])
 }
 
 /// The string at `path` in a fixture, empty if absent.
@@ -786,12 +932,18 @@ fn handle_watcher(
             Some(json!({ "from": to, "configuration": { "actor": state.thread_config_actor } })),
             Vec::new(),
         ),
-        "watchTargets" => {
-            state.targets_watched = true;
-            let mut forms = vec![build_target_available(state, to)];
-            forms.extend(state.frames.iter().map(|frame| frame_available(to, frame)));
-            (Some(json!({ "from": to })), forms)
-        }
+        "watchTargets" => match worker_kind(packet["targetType"].as_str()) {
+            Some(kind) => {
+                watch_workers(state, kind);
+                (Some(json!({ "from": to })), Vec::new())
+            }
+            None => {
+                state.targets_watched = true;
+                let mut forms = vec![build_target_available(state, to)];
+                forms.extend(state.frames.iter().map(|frame| frame_available(to, frame)));
+                (Some(json!({ "from": to })), forms)
+            }
+        },
         "watchResources" => handle_watch_resources(state, to, packet),
         "unwatchResources" => {
             for t in extract_resource_types(packet) {
@@ -799,8 +951,21 @@ fn handle_watcher(
             }
             (None, Vec::new())
         }
-        "unwatchTargets" => (None, Vec::new()),
+        "unwatchTargets" => {
+            if let Some(kind) = worker_kind(packet["targetType"].as_str()) {
+                state.watched_workers.remove(kind);
+            }
+            (None, Vec::new())
+        }
         _ => (Some(json!({ "from": to })), Vec::new()),
+    }
+}
+
+/// Watches the workers of `kind`, announcing those running after the reply.
+fn watch_workers(state: &mut State, kind: &'static str) {
+    state.watched_workers.insert(kind);
+    for worker in state.workers.iter().filter(|w| w.target_type == kind) {
+        state.announce_worker(worker);
     }
 }
 
@@ -833,6 +998,11 @@ fn handle_watch_resources(
             .filter(|frame| !frame.sources.is_empty());
         notifs
             .extend(frames.map(|frame| sources_packet(&frame.target.actor, frame.sources.clone())));
+        let workers = state
+            .workers
+            .iter()
+            .filter(|w| state.watched_workers.contains(w.target_type));
+        notifs.extend(workers.map(worker_sources));
     }
     for t in types {
         state.watched_resources.insert(t);
@@ -1729,5 +1899,148 @@ mod tests {
             [source]
         );
         assert_eq!((bound.location.column, bound.resolved), (Some(16), true));
+    }
+
+    /// The scripts of the mock's workers.
+    const WORKER_SCRIPT: &str = "http://127.0.0.1:8765/worker.js";
+    const SERVICE_WORKER_SCRIPT: &str = "http://127.0.0.1:8765/sw.js";
+
+    /// The resources of a captured `resources-available-array` fixture.
+    fn captured(fixture: &str) -> Vec<Value> {
+        match load(fixture)["array"][0][1].take() {
+            Value::Array(resources) => resources,
+            _ => Vec::new(),
+        }
+    }
+
+    /// A debugger on `mock` following both kinds of workers, once `ready` holds.
+    async fn watching_workers(mock: &MockRdp, ready: impl Fn(&Debugger) -> bool) -> Debugger {
+        let client = connected(mock).await;
+        let debugger = Debugger::attach_selected(&client).await.unwrap();
+        debugger.watch_workers().await.unwrap();
+        debugger.watch_service_workers().await.unwrap();
+        assert!(crate::test_support_wait(|| ready(&debugger)).await);
+        debugger
+    }
+
+    /// MCK-45: Dedicated and service workers are announced as targets of
+    /// their kind once watched, with their script as a source, whether added
+    /// before or after; a removed worker is gone.
+    #[tokio::test]
+    async fn workers_are_announced_with_their_sources() {
+        // Given a dedicated worker and a service worker started before the debugger watches them
+        let mock = MockRdp::start().await.unwrap();
+        let early = mock.add_worker(WORKER_SCRIPT);
+        let service = mock.add_service_worker(SERVICE_WORKER_SCRIPT);
+
+        // When the debugger watches both kinds
+        let debugger = watching_workers(&mock, |d| {
+            d.worker_sources(&early).len() == 1 && d.service_worker_sources(&service).len() == 1
+        })
+        .await;
+
+        // Then each is followed as its kind, with its script as its source
+        assert_eq!(debugger.worker_targets()[0].actor, early);
+        assert_eq!(debugger.service_worker_targets()[0].actor, service);
+        let script = debugger.worker_sources(&early)[0].url.clone();
+        assert_eq!(script.as_deref(), Some(WORKER_SCRIPT));
+
+        // When another dedicated worker starts, and the first one ends
+        let late = mock.add_worker("http://127.0.0.1:8765/late.js");
+        mock.remove_worker(&early);
+
+        // Then only the late one is followed, and the service worker still is
+        let only_late = || {
+            debugger
+                .worker_targets()
+                .iter()
+                .map(|w| w.actor.clone())
+                .eq([late.clone()])
+        };
+        assert!(crate::test_support_wait(only_late).await);
+        assert_eq!(debugger.service_worker_targets().len(), 1);
+    }
+
+    /// MCK-46: A worker's resources are emitted from its own target: the
+    /// captured console messages reach the stream of its kind.
+    #[tokio::test]
+    async fn worker_console_messages_come_from_their_targets() {
+        // Given a debugger following a dedicated worker and a service worker
+        let mock = MockRdp::start().await.unwrap();
+        let worker = mock.add_worker(WORKER_SCRIPT);
+        let service = mock.add_service_worker(SERVICE_WORKER_SCRIPT);
+        let debugger = watching_workers(&mock, |d| {
+            d.worker_targets().len() == 1 && d.service_worker_targets().len() == 1
+        })
+        .await;
+        let mut dedicated = debugger.on_worker_resource("console-message");
+        let mut services = debugger.on_service_worker_resource("console-message");
+
+        // When the service worker logs, then the dedicated worker, as captured
+        let sw_messages = captured(fx::RDP_SERVICE_WORKER_RESOURCES_CONSOLE_MESSAGE);
+        mock.emit_target_resources(&service, "console-message", sw_messages);
+        let messages = captured(fx::RDP_WORKER_RESOURCES_CONSOLE_MESSAGE);
+        mock.emit_target_resources(&worker, "console-message", messages);
+
+        // Then each kind's stream yields its own worker's messages
+        let packet = tokio::time::timeout(T, dedicated.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(packet.from.as_deref(), Some(worker.as_str()));
+        let logged = parse_resources(&packet, "console-message");
+        assert_eq!(logged[1]["level"], "error");
+        let packet = tokio::time::timeout(T, services.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(packet.from.as_deref(), Some(service.as_str()));
+    }
+
+    /// MCK-47: A worker's thread resumes from its own target.
+    #[tokio::test]
+    async fn worker_threads_resume_from_their_own_targets() {
+        // Given a debugger following a dedicated worker, and a filter on its thread states
+        let mock = MockRdp::start().await.unwrap();
+        let worker = mock.add_worker(WORKER_SCRIPT);
+        let debugger = watching_workers(&mock, |d| d.worker_targets().len() == 1).await;
+        let mut states = debugger.on_worker_resource("thread-state");
+
+        // When its thread resumes
+        let thread = debugger.thread_of(&worker).unwrap();
+        thread.resume().await.unwrap();
+
+        // Then the request went to its thread, and its own target says it resumed
+        let resumed = mock.wait_for_request("resume", T).await.unwrap();
+        assert_eq!(resumed.to, thread.thread_actor());
+        let packet = tokio::time::timeout(T, states.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(packet.from.as_deref(), Some(worker.as_str()));
+    }
+
+    /// MCK-48: Workers are announced only while their kind is watched.
+    #[tokio::test]
+    async fn workers_are_announced_only_while_watched() {
+        // Given a debugger that watched dedicated workers, then stopped
+        let mock = MockRdp::start().await.unwrap();
+        let client = connected(&mock).await;
+        let debugger = Debugger::attach_selected(&client).await.unwrap();
+        debugger.watch_workers().await.unwrap();
+        debugger.unwatch_workers().unwrap();
+        assert!(mock.wait_for_request("unwatchTargets", T).await.is_some());
+        let mut forms = client.on_type("target-available-form");
+
+        // When a dedicated worker and a service worker start
+        mock.add_worker(WORKER_SCRIPT);
+        mock.add_service_worker(SERVICE_WORKER_SCRIPT);
+
+        // Then neither is announced
+        let quiet = tokio::time::timeout(Duration::from_millis(300), forms.next()).await;
+        assert!(quiet.is_err(), "{quiet:?}");
     }
 }

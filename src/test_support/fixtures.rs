@@ -89,9 +89,34 @@ pub const RDP_RESOURCES_CSS_MESSAGE: &str = include_str!("fixtures/rdp/resources
 pub const RDP_RESOURCES_PLATFORM_MESSAGE: &str =
     include_str!("fixtures/rdp/resources_platform_message.handmade.json");
 
+/// Captured `target-available-form` of a dedicated worker (Firefox 160):
+/// `targetType: "worker"`, its own thread and console actors, `id`, `url`
+/// and the `relatedDocumentInnerWindowId` of the page that started it.
+pub const RDP_WORKER_TARGET_AVAILABLE: &str =
+    include_str!("fixtures/rdp/worker_target_available.json");
+
+/// Captured `console-message` resources of a dedicated worker, from its own
+/// target (Firefox 160, `dom.worker.console.dispatch_events_to_main_thread`
+/// set to `false`): a `console.warn` with an object grip and a
+/// `console.error` with its stack.
+pub const RDP_WORKER_RESOURCES_CONSOLE_MESSAGE: &str =
+    include_str!("fixtures/rdp/worker_resources_console_message.json");
+
+/// Captured `target-available-form` of a service worker (Firefox 160):
+/// `targetType: "service_worker"`, its own thread and console actors, `id`
+/// and `url`.
+pub const RDP_SERVICE_WORKER_TARGET_AVAILABLE: &str =
+    include_str!("fixtures/rdp/service_worker_target_available.json");
+
+/// Captured `console-message` resources of a service worker, from its own
+/// target (Firefox 160, same preference): a `console.warn` and a
+/// `console.error` with its stack.
+pub const RDP_SERVICE_WORKER_RESOURCES_CONSOLE_MESSAGE: &str =
+    include_str!("fixtures/rdp/service_worker_resources_console_message.json");
+
 /// Every embedded fixture, for the parse test.
 #[cfg(test)]
-pub(crate) const ALL: [&str; 44] = [
+pub(crate) const ALL: [&str; 48] = [
     SESSION_STATUS_READY,
     SESSION_STATUS_BUSY,
     SESSION_NEW,
@@ -136,6 +161,10 @@ pub(crate) const ALL: [&str; 44] = [
     RDP_RESOURCES_ERROR_MESSAGE,
     RDP_RESOURCES_CSS_MESSAGE,
     RDP_RESOURCES_PLATFORM_MESSAGE,
+    RDP_WORKER_TARGET_AVAILABLE,
+    RDP_WORKER_RESOURCES_CONSOLE_MESSAGE,
+    RDP_SERVICE_WORKER_TARGET_AVAILABLE,
+    RDP_SERVICE_WORKER_RESOURCES_CONSOLE_MESSAGE,
 ];
 
 /// Parses a fixture. They are compile-time constants checked by a unit test,

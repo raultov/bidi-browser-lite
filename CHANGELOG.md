@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `test-support`: `MockRdp` serves the tab's workers, which `bidi-lite` 0.1.7's
+  `Debugger` follows (raultov/bidi-lite#2): `add_worker()` and
+  `add_service_worker()` start a dedicated or a service worker, announced as
+  Firefox 160 does, only while its kind is watched (`watchTargets` with
+  `targetType: "worker"` / `"service_worker"`) and after the reply, with its
+  script as its source (also on a later `watchResources`); `remove_worker()`
+  ends it (its whole form as a `target-destroyed-form`);
+  `emit_target_resources()` sends resources from any target, such as a
+  worker's console messages. A worker's thread answers `resume` from its own
+  target. `unwatchTargets` of a kind stops announcing new ones.
+- `test-support`: real Firefox 160 fixtures of workers, public for consumers'
+  tests: `fixtures::RDP_WORKER_TARGET_AVAILABLE`,
+  `RDP_WORKER_RESOURCES_CONSOLE_MESSAGE`, `RDP_SERVICE_WORKER_TARGET_AVAILABLE`,
+  `RDP_SERVICE_WORKER_RESOURCES_CONSOLE_MESSAGE`.
+
+### Changed
+- Dependencies: requires `bidi-lite` 0.1.7 (the `Debugger` follows the tab's
+  dedicated workers: `watch_workers`, `worker_targets`, `worker_sources`,
+  `on_worker_resource`).
+- `MockRdp` answers `watchTargets` for worker kinds with their workers only;
+  before, any `watchTargets` re-announced the tab's target and frames.
+
 ## [0.1.7] - 2026-11-25
 
 ### Changed

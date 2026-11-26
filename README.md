@@ -309,7 +309,17 @@ inline `<script>` blocks of one page; `emit_before_reply()` sends a packet
 another origin, which Firefox runs as targets of their own: `add_frame()`
 announces one (with its own thread and console), `add_frame_source()` gives
 it sources, `pause_frame()` pauses its thread and `remove_frame()` destroys
-it; requests to its thread and console are answered like the tab's.
+it; requests to its thread and console are answered like the tab's. Workers
+(followed by `bidi-lite` 0.1.7's `watch_workers` / `watch_service_workers`):
+`add_worker()` and `add_service_worker()` start one, announced like Firefox
+160 does, only while its kind is watched and after the `watchTargets` reply,
+with its script as its source; `remove_worker()` ends it;
+`emit_target_resources()` sends resources from any target, such as a
+worker's console messages (`fixtures::RDP_WORKER_RESOURCES_CONSOLE_MESSAGE`,
+`RDP_SERVICE_WORKER_RESOURCES_CONSOLE_MESSAGE`, and the targets' forms
+`RDP_WORKER_TARGET_AVAILABLE`, `RDP_SERVICE_WORKER_TARGET_AVAILABLE`, are
+captured from Firefox 160). A worker's thread answers `resume` from its own
+target.
 
 The `fake_firefox_helper` binary (same feature) stands in for Firefox in
 launch tests: point `firefox_path` at it and pick a behaviour with the
